@@ -279,16 +279,10 @@ def agy_exe() -> Path:
 # Map display names shown in Settings → real agy --model IDs
 _MODEL_ID_MAP = {
     "Gemini 3.5 Flash":    "gemini-3.5-flash",
-    "Gemini 3.5 Pro":      "gemini-3.5-pro",
-    "Gemini 3.1 Flash":    "gemini-3.1-flash",
     "Gemini 3.1 Pro":      "gemini-3.1-pro",
-    "Gemini 3.0 Flash":    "gemini-3.0-flash",
-    "Gemini 3.0 Pro":      "gemini-3.0-pro",
-    "Gemini 2.5 Flash":    "gemini-2.5-flash",
-    "Gemini 2.5 Pro":      "gemini-2.5-pro",
-    "Gemini 2.0 Flash":    "gemini-2.0-flash",
-    "Gemini 1.5 Flash":    "gemini-1.5-flash",
-    "Gemini 1.5 Pro":      "gemini-1.5-pro",
+    "Claude Sonnet 4.6":   "claude-4.6-sonnet",
+    "Claude Opus 4.6":     "claude-4.6-opus",
+    "GPT-OSS 120B":        "gpt-oss-120b",
 }
 
 def agy_model() -> str:
@@ -3164,12 +3158,11 @@ class SettingsTab(ctk.CTkFrame):
                      text_color=INK).grid(row=0, column=0, padx=16, pady=14, sticky="w")
         self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-3.5-flash"))
         models = [
-            "gemini-3.5-flash", "gemini-3.5-pro",
-            "gemini-3.1-flash", "gemini-3.1-pro",
-            "gemini-3.0-flash", "gemini-3.0-pro",
-            "gemini-2.5-flash", "gemini-2.5-pro",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash", "gemini-1.5-pro"
+            "Gemini 3.5 Flash",
+            "Gemini 3.1 Pro",
+            "Claude Sonnet 4.6",
+            "Claude Opus 4.6",
+            "GPT-OSS 120B"
         ]
         ctk.CTkOptionMenu(mr, variable=self._model_var, values=models, width=260, height=36,
                           font=(FONT_BODY, 13), fg_color=BLUE_SOFT, button_color=BLUE,
