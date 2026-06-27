@@ -3757,5 +3757,24 @@ class DashboardApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    # When frozen as a PyInstaller exe, write an env snapshot to a log file.
+    # This lets us diagnose child-process environment issues without a debugger.
+    if getattr(sys, 'frozen', False):
+        try:
+            log_dir = Path(os.environ.get("APPDATA", "~")).expanduser() / "MayaDashboard"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with open(log_dir / "startup_env.log", "w") as _f:
+                _f.write(f"=== MayaDashboard frozen startup {datetime.now()} ===\n")
+                _f.write(f"sys.frozen = {getattr(sys, 'frozen', False)}\n")
+                _f.write(f"_MEIPASS   = {getattr(sys, '_MEIPASS', 'N/A')}\n\n")
+                _f.write("--- Environment ---\n")
+                for k, v in sorted(os.environ.items()):
+                    _f.write(f"  {k}={v}\n")
+                _f.write("\n--- clean_env() output ---\n")
+                for k, v in sorted(clean_env().items()):
+                    _f.write(f"  {k}={v}\n")
+        except Exception:
+            pass  # never crash startup over diagnostics
+
     app = DashboardApp()
     app.mainloop()
