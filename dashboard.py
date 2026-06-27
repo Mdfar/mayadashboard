@@ -166,6 +166,30 @@ LES_SCHEMA = (
     'example":"a concrete code snippet or worked example","'
     'action":"one concrete actionable takeaway","learned":false}]}'
 )
+TOP_PICKS_SCHEMA = (
+    "For each entry, generate a beautiful HTML card using the classes: "
+    "'pick-card', 'pick-title', 'pick-meta', 'pick-meta-item', 'pick-section', 'pick-section-title', "
+    "'pick-summary', 'pick-why', 'pick-tags', and 'pick-tag'. "
+    "Use exactly this structure for each entry:\n"
+    "<div class=\"pick-card\">\n"
+    "  <div class=\"pick-title\">🔥 EMOJI HEADLINE</div>\n"
+    "  <div class=\"pick-meta\">\n"
+    "    <span class=\"pick-meta-item\">📅 Date: YYYY-MM-DD</span>\n"
+    "    <span class=\"pick-meta-item\">🌐 Source: Source Name</span>\n"
+    "  </div>\n"
+    "  <div class=\"pick-section\">\n"
+    "    <div class=\"pick-section-title\">Summary</div>\n"
+    "    <div class=\"pick-summary\">Detailed 2-3 sentence summary.</div>\n"
+    "  </div>\n"
+    "  <div class=\"pick-why\">\n"
+    "    <strong>Why it matters:</strong> 1-2 sentences on industry impact and significance.\n"
+    "  </div>\n"
+    "  <div class=\"pick-tags\">\n"
+    "    <span class=\"pick-tag\">#tag1</span>\n"
+    "    <span class=\"pick-tag\">#tag2</span>\n"
+    "  </div>\n"
+    "</div>\n"
+)
 
 def _detect_agy() -> str:
     # 1. Environment Variable
@@ -221,51 +245,10 @@ DEFAULT_SETTINGS = {
     "agy_path": _detect_agy(),
     "model": "gemini-3.5-flash",
     "auto_generate": True,
-    "top_picks_instruction": (
-        "Research the 5 most important AI and tech developments for today. "
-        "For each entry, generate a beautiful HTML card using the classes: "
-        "'pick-card', 'pick-title', 'pick-meta', 'pick-meta-item', 'pick-section', 'pick-section-title', "
-        "'pick-summary', 'pick-why', 'pick-tags', and 'pick-tag'. "
-        "Use exactly this structure for each entry:\n"
-        "<div class=\"pick-card\">\n"
-        "  <div class=\"pick-title\">🔥 EMOJI HEADLINE</div>\n"
-        "  <div class=\"pick-meta\">\n"
-        "    <span class=\"pick-meta-item\">📅 Date: YYYY-MM-DD</span>\n"
-        "    <span class=\"pick-meta-item\">🌐 Source: Source Name</span>\n"
-        "  </div>\n"
-        "  <div class=\"pick-section\">\n"
-        "    <div class=\"pick-section-title\">Summary</div>\n"
-        "    <div class=\"pick-summary\">Detailed 2-3 sentence summary.</div>\n"
-        "  </div>\n"
-        "  <div class=\"pick-why\">\n"
-        "    <strong>Why it matters:</strong> 1-2 sentences on industry impact and significance.\n"
-        "  </div>\n"
-        "  <div class=\"pick-tags\">\n"
-        "    <span class=\"pick-tag\">#tag1</span>\n"
-        "    <span class=\"pick-tag\">#tag2</span>\n"
-        "  </div>\n"
-        "</div>\n\n"
-        "Write raw HTML directly to the target file. Do not wrap in markdown backticks. Overwrite the file completely. Do not explain, just write it."
-    ),
-    "plan_instruction": (
-        "Create a daily plan for a software engineer/AI developer for today. "
-        f"Write JSON using EXACTLY this schema: {PLAN_SCHEMA} . "
-        "Sections: Morning, Afternoon, Evening. priority is one of high|medium|low. "
-        "id must be unique. Output ONLY valid JSON to the target file. Do not explain."
-    ),
-    "activities_instruction": (
-        "Read the target file if it exists, preserve its tasks, then update it. "
-        f"Write JSON using EXACTLY this schema: {ACT_SCHEMA} . "
-        "status is one of active|pending|done|blocked. Add 3 useful recommendations based on the tasks. "
-        "Output ONLY valid JSON to the target file. Do not explain."
-    ),
-    "lessons_instruction": (
-        "Write exactly 10 in-depth lessons (like a tutorial chapter, e.g. w3schools style) "
-        "for a software engineer working on AI today. Each lesson needs a clear explanation "
-        "(what), a concrete worked example (example), and one actionable takeaway (action). "
-        f"Write JSON using EXACTLY this schema: {LES_SCHEMA} . "
-        "learned is always false initially. id unique. Output ONLY valid JSON to the target file. Do not explain."
-    ),
+    "top_picks_instruction": "Research the 5 most important AI and tech developments for today.",
+    "plan_instruction": "Create a daily plan for a software engineer/AI developer for today.",
+    "activities_instruction": "Read the target file if it exists, preserve its tasks, then update it. Add 3 useful recommendations based on the tasks.",
+    "lessons_instruction": "Write exactly 10 in-depth lessons (like a tutorial chapter, e.g. w3schools style) for a software engineer working on AI today. Each lesson needs a clear explanation (what), a concrete worked example (example), and one actionable takeaway (action).",
     "wp_url": "https://yourblog.com",
     "wp_username": "admin",
     "wp_app_password": "",
@@ -316,10 +299,18 @@ def agy_model() -> str:
         return display
     return _MODEL_ID_MAP.get(display, "gemini-3.5-flash")
 
-def build_prompt(instruction: str, kind: str, ds: str) -> str:
-    """Attach the concrete, date-correct target file path to a user instruction."""
+def build_prompt(instruction: str, kind: str, ds: str) -> tuple:
+    """Attach the concrete, date-correct target file path and schema to a user instruction."""
     target = path_for(kind, ds)
-    return f"{instruction}\n\nTARGET FILE (write here, overwrite it): {target}"
+    schema_map = {
+        "top_picks": f"Write raw HTML directly to the target file. Do not wrap in markdown backticks. Overwrite the file completely. Do not explain, just write it.\n{TOP_PICKS_SCHEMA}",
+        "plan": f"Write JSON using EXACTLY this schema: {PLAN_SCHEMA} . Sections: Morning, Afternoon, Evening. priority is one of high|medium|low. id must be unique. Output ONLY valid JSON to the target file. Do not explain.",
+        "activities": f"Write JSON using EXACTLY this schema: {ACT_SCHEMA} . status is one of active|pending|done|blocked. Add 3 useful recommendations based on the tasks. Output ONLY valid JSON to the target file. Do not explain.",
+        "lessons": f"Write JSON using EXACTLY this schema: {LES_SCHEMA} . learned is always false initially. id unique. Output ONLY valid JSON to the target file. Do not explain."
+    }
+    system_instr = schema_map.get(kind, "")
+    full_prompt = f"{instruction} {system_instr}\n\nTARGET FILE (write here, overwrite it): {target}"
+    return full_prompt, instruction
 
 # Set by DashboardApp at startup; gives tabs access to current_date + toast().
 APP = None
@@ -2887,7 +2878,7 @@ class TerminalTab(ctk.CTkFrame):
             self._append("agy terminal ready (pipe mode).\n\n")
             self.after(self.POLL_MS, self._poll_queue)
 
-    def _run_pipe(self, prompt: str):
+    def _run_pipe(self, prompt: str, display_text: str = None):
         exe = agy_exe()
         exe_str = str(exe) if exe.exists() else (shutil.which("agy") or "agy")
         cmd = [exe_str, "--print", prompt]
@@ -2895,7 +2886,7 @@ class TerminalTab(ctk.CTkFrame):
         if model_id and "-" in model_id:
             cmd.extend(["--model", model_id])
             
-        self._append(f"\n> {prompt}\n")
+        self._append(f"\n> {display_text or prompt}\n")
         self._status.configure(text="● Running...", text_color=YOLK_DK)
 
         def _stream():
@@ -2918,20 +2909,24 @@ class TerminalTab(ctk.CTkFrame):
         threading.Thread(target=_stream, daemon=True).start()
         self.after(self.POLL_MS, self._poll_queue)
 
-    def send_prompt(self, text):
+    def send_prompt(self, text, display_text=None):
         if not self._running:
             self._append("\n[Terminal not connected — click Restart]\n")
             return
         if text.strip():
-            self._history.insert(0, text); self._hist_idx = -1
+            self._history.insert(0, display_text or text); self._hist_idx = -1
         # Pipe mode (frozen exe): run agy --print
         if self._pipe_mode:
-            self._run_pipe(text)
+            self._run_pipe(text, display_text)
             return
         # PTY mode
         if not self._pty:
             self._append("\n[Terminal not connected — click Restart]\n")
             return
+        
+        if display_text:
+            self._append(f"\n> {display_text}\n")
+
         try:
             self._pty.write(text + "\r")
         except Exception as e:
@@ -3693,13 +3688,17 @@ class DashboardApp(ctk.CTk):
         TERM_IDX = 6
 
         def ask_agy_fn(prompt):
+            display = None
+            if isinstance(prompt, tuple):
+                prompt, display = prompt
+                
             self._sidebar.select(TERM_IDX)
             # Wait until the PTY is actually running before sending the prompt.
             # agy needs up to 2-3 s to start; 150 ms was far too short and
             # caused "send error: Pty is closed" every time.
             def _wait_and_send(remaining=40):  # 40 × 100 ms = 4 s max wait
                 if self._term._running:
-                    self._term.send_prompt(prompt)
+                    self._term.send_prompt(prompt, display)
                 elif remaining > 0:
                     self.after(100, lambda: _wait_and_send(remaining - 1))
                 else:
