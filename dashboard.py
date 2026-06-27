@@ -885,6 +885,7 @@ class TopPicksTab(ctk.CTkFrame):
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
             self._btn_ask.configure(text="  Generating...", state="disabled")
+            self._btn_ask.update()
             self._ask_agy_fn(build_prompt(instr, "top_picks", ds))
         else:
             launch_agy()
@@ -1852,6 +1853,9 @@ class JsonTab(ctk.CTkFrame):
         instr = SETTINGS.get(self._instruction_key(), "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
+            if hasattr(self, "_btn_ask"):
+                self._btn_ask.configure(text="  Generating...", state="disabled")
+                self._btn_ask.update()
             self._ask_agy_fn(build_prompt(instr, self.KIND, ds))
         else:
             launch_agy()
@@ -2038,6 +2042,8 @@ class PlanTab(JsonTab):
         if APP: APP.toast(f"→ Activities: {task['title'][:50]}", "ok")
 
     def render(self):
+        if hasattr(self, "_btn_ask"):
+            self._btn_ask.configure(text="  Generate with agy", state="normal")
         names = [s.get("name", "?") for s in self._sections()] or ["Morning"]
         self._sec_menu.configure(values=names)
         if self._sec_var.get() not in names:
@@ -2559,6 +2565,7 @@ class LessonsTab(ctk.CTkFrame):
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
             self._btn_ask.configure(text="  Generating...", state="disabled")
+            self._btn_ask.update()
             self._ask_agy_fn(build_prompt(instr, "lessons", ds))
         else:
             launch_agy()
