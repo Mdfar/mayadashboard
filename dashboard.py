@@ -2841,13 +2841,7 @@ class TerminalTab(ctk.CTkFrame):
         self._start_pty_with(self._default_args(), self._DEFAULT_CWD)
 
     def _start_pty_with(self, args, cwd=None):
-        cwd = cwd or str(BASE_DIR)
-        try:
-            import winpty
-        except ImportError:
-            self._append("⚠  winpty not installed. Run:  pip install pywinpty\n")
-            self._status.configure(text="pywinpty missing", text_color=RED)
-            return
+        cwd = cwd or str(Path.home())
         
         exe_path = args[0]
         is_fallback = ("cmd.exe" in exe_path or "bash" in exe_path or "sh" in exe_path)
@@ -2861,6 +2855,22 @@ class TerminalTab(ctk.CTkFrame):
                 args = ["cmd.exe"] if os.name == 'nt' else ["/bin/bash", "-i"]
                 is_fallback = True
 
+        # Frozen Exe Pipe Mode Fallback check
+        if getattr(sys, 'frozen', False):
+            self._running = True
+            self._pipe_mode = True
+            self._status.configure(text="● agy Connected", text_color=GREEN)
+            self._append("agy terminal ready. Type a prompt and press Send.\n(Running in pipe mode)\n\n")
+            self.after(self.POLL_MS, self._poll_queue)
+            return
+
+        try:
+            import winpty
+        except ImportError:
+            self._append("⚠  winpty not installed. Run:  pip install pywinpty\n")
+            self._status.configure(text="pywinpty missing", text_color=RED)
+            return
+
         try:
             self._pty = winpty.PtyProcess.spawn(args, cwd=cwd, env=clean_env(), dimensions=(40, 220))
             self._running = True
@@ -2869,8 +2879,44 @@ class TerminalTab(ctk.CTkFrame):
             threading.Thread(target=self._reader, daemon=True).start()
             self.after(self.POLL_MS, self._poll_queue)
         except Exception as e:
-            self._append(f"⚠  Failed to spawn process {args}: {e}\n")
-            self._status.configure(text="Error", text_color=RED)
+            self._append(f"⚠  Failed to spawn process {args}: {e}\nFalling back to pipe mode...\n")
+            self._pipe_mode = True
+            self._pty = None
+            self._running = True
+            self._status.configure(text="● agy Connected", text_color=GREEN)
+            self._append("agy terminal ready (pipe mode).\n\n")
+            self.after(self.POLL_MS, self._poll_queue)
+
+    def _run_pipe(self, prompt: str):
+        exe = agy_exe()
+        exe_str = str(exe) if exe.exists() else (shutil.which("agy") or "agy")
+        cmd = [exe_str, "--print", prompt]
+        model_id = agy_model()
+        if model_id and "-" in model_id:
+            cmd.extend(["--model", model_id])
+            
+        self._append(f"\n> {prompt}\n")
+        self._status.configure(text="● Running...", text_color=YOLK_DK)
+
+        def _stream():
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, env=clean_env(), cwd=str(Path.home()),
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                for line in proc.stdout:
+                    self._q.put(ANSI_RE.sub('', line))
+                proc.wait()
+            except Exception as ex:
+                self._q.put(f"\n[pipe error: {ex}]\n")
+            finally:
+                self._q.put("\n")
+                self.after(0, lambda: self._status.configure(
+                    text="● agy Connected", text_color=GREEN))
+
+        threading.Thread(target=_stream, daemon=True).start()
+        self.after(self.POLL_MS, self._poll_queue)
 
     def send_prompt(self, text):
         if not self._running:
