@@ -168,13 +168,50 @@ LES_SCHEMA = (
 )
 
 def _detect_agy() -> str:
+    # 1. Environment Variable
     env = os.environ.get("AGY_PATH")
     if env and Path(env).exists():
         return env
+        
+    # 2. Check System PATH
     which = shutil.which("agy")
     if which:
         return which
-    fallback = Path.home() / "AppData/Local/agy/bin/agy.exe"
+        
+    # 3. Check App Data directory (Gemini CLI install default)
+    app_data_path = Path.home() / ".gemini/antigravity-cli/bin/agy.exe"
+    if app_data_path.exists():
+        return str(app_data_path)
+    app_data_path2 = Path.home() / ".gemini/antigravity-cli/agy.exe"
+    if app_data_path2.exists():
+        return str(app_data_path2)
+        
+    # 4. Check relative to current Python executable scripts folder (venv)
+    py_exe_dir = Path(sys.executable).parent
+    if (py_exe_dir / "agy.exe").exists():
+        return str(py_exe_dir / "agy.exe")
+    if (py_exe_dir / "Scripts/agy.exe").exists():
+        return str(py_exe_dir / "Scripts/agy.exe")
+    if (py_exe_dir / "bin/agy").exists():
+        return str(py_exe_dir / "bin/agy")
+        
+    # 5. Check local project .venv directory
+    local_venv_win = Path(BASE_DIR) / ".venv" / "Scripts" / "agy.exe"
+    if local_venv_win.exists():
+        return str(local_venv_win)
+    local_venv_unix = Path(BASE_DIR) / ".venv" / "bin" / "agy"
+    if local_venv_unix.exists():
+        return str(local_venv_unix)
+        
+    # 6. Check common global AppData Local Python directories (Windows)
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        p = Path(local_app_data) / "Programs/Python"
+        if p.exists():
+            for scripts_dir in p.glob("**/Scripts/agy.exe"):
+                return str(scripts_dir)
+
+    fallback = Path.home() / ".gemini/antigravity-cli/bin/agy.exe"
     return str(fallback)
 
 DEFAULT_SETTINGS = {
@@ -779,7 +816,7 @@ class TopPicksTab(ctk.CTkFrame):
             f"# Welcome to Maya Developer Workspace! 👋\n\n"
             f"This dashboard helps you coordinate your daily developer schedule, plan projects, track lessons, and generate professional blog posts.\n\n"
             f"### 🚀 How to Get Started:\n"
-            f"1. **Set up your AI Executable**: Go to the **Settings** tab and configure your local `agy` path so the dashboard can run commands.\n"
+            f"1. **Set up your AI Executable**: Go to the **Settings** tab and click the **Auto-Detect** button next to 'agy executable path' to automatically locate the `agy` binary on your PC, or paste the path manually.\n"
             f"2. **Fetch Today's Tech News**: Click the **Refresh with agy** button above to launch an automated research task. Once completed, this home screen will automatically update with today's hot picks!\n"
             f"3. **Plan & Log**: Use the **Activities**, **Plan**, and **Lessons** tabs to manage your daily developer tasks, notes, and checklist items.\n"
             f"4. **AI Research & Writing (Step 1-5)**: Navigate to the **Research** tab to research practitioner discussions, outline articles, draft SEO-optimized posts, run audits, generate cover banners, and sync your finished articles to WordPress, Ghost CMS, or local Git repositories.\n"
@@ -790,7 +827,7 @@ class TopPicksTab(ctk.CTkFrame):
             f"Welcome to Maya Developer Workspace! \n\n"
             f"This dashboard helps you coordinate your daily developer schedule, plan projects, track lessons, and generate professional blog posts.\n\n"
             f"How to Get Started:\n"
-            f"1. Set up your AI Executable: Go to the Settings tab and configure your local 'agy' path so the dashboard can run commands.\n"
+            f"1. Set up your AI Executable: Go to the Settings tab and click the 'Auto-Detect' button next to 'agy executable path' to automatically locate the 'agy' binary on your PC.\n"
             f"2. Fetch Today's Tech News: Click the 'Refresh with agy' button above to launch an automated research task.\n"
             f"3. Plan & Log: Use the Activities, Plan, and Lessons tabs to manage your daily developer tasks, notes, and checklist items.\n"
             f"4. AI Research & Writing: Navigate to the Research tab to research, outline, draft, verify, generate banners, and publish drafts.\n"
@@ -2982,7 +3019,9 @@ class SettingsTab(ctk.CTkFrame):
         self._agy_var = ctk.StringVar(value=SETTINGS.get("agy_path", _detect_agy()))
         ctk.CTkEntry(ap, textvariable=self._agy_var, height=36, font=("Consolas", 12),
                      fg_color=CARD2, border_color=BORDER, text_color=INK).grid(
-            row=0, column=1, columnspan=2, padx=16, pady=14, sticky="ew")
+            row=0, column=1, padx=(16, 8), pady=14, sticky="ew")
+        pill_button(ap, "Auto-Detect", self._auto_detect_agy, "primary", width=120).grid(
+            row=0, column=2, padx=(0, 16), pady=14)
         r += 1
 
         mr = card_frame(s); mr.grid(row=r, column=0, sticky="ew", pady=4)
@@ -3073,6 +3112,18 @@ class SettingsTab(ctk.CTkFrame):
         self._save_btn.pack(side="left", padx=4)
         self._save_lbl = ctk.CTkLabel(sf, text="", font=(FONT_BODY, 13), text_color=GREEN)
         self._save_lbl.pack(side="left", padx=12)
+
+    def _auto_detect_agy(self):
+        detected = _detect_agy()
+        p = Path(detected)
+        if p.exists() or shutil.which(detected) or shutil.which("agy"):
+            self._agy_var.set(detected)
+            if APP:
+                APP.toast("agy.exe auto-detected successfully!", "ok")
+        else:
+            self._agy_var.set(detected)
+            if APP:
+                APP.toast("agy not found. Please set path manually.", "error")
 
     def _save(self):
         try:
