@@ -219,7 +219,7 @@ DEFAULT_SETTINGS = {
     "font_face": "Segoe UI",
     "theme": "light",
     "agy_path": _detect_agy(),
-    "model": "Gemini 3.5 Flash (Medium)",
+    "model": "gemini-2.5-flash",
     "auto_generate": True,
     "top_picks_instruction": (
         "Research the 5 most important AI and tech developments for today. "
@@ -293,8 +293,22 @@ SETTINGS.update(load_settings())
 def agy_exe() -> Path:
     return Path(SETTINGS.get("agy_path", _detect_agy()))
 
+# Map display names shown in Settings → real agy --model IDs
+_MODEL_ID_MAP = {
+    "Gemini 2.5 Flash":    "gemini-2.5-flash",
+    "Gemini 2.5 Pro":      "gemini-2.5-pro",
+    "Gemini 2.0 Flash":    "gemini-2.0-flash",
+    "Gemini 1.5 Flash":    "gemini-1.5-flash",
+    "Gemini 1.5 Pro":      "gemini-1.5-pro",
+}
+
 def agy_model() -> str:
-    return SETTINGS.get("model", "Gemini 3.5 Flash (Medium)")
+    """Return the real API model ID that agy --model accepts."""
+    display = SETTINGS.get("model", "gemini-2.5-flash")
+    # If it's already an API id (contains a dash), use as-is
+    if "-" in display:
+        return display
+    return _MODEL_ID_MAP.get(display, "gemini-2.5-flash")
 
 def build_prompt(instruction: str, kind: str, ds: str) -> str:
     """Attach the concrete, date-correct target file path to a user instruction."""
@@ -2782,7 +2796,11 @@ class TerminalTab(ctk.CTkFrame):
     def _default_args(self):
         exe = agy_exe()
         if exe.exists() or shutil.which(str(exe)) or shutil.which("agy"):
-            return [str(exe), "--model", agy_model()]
+            model_id = agy_model()
+            # Only pass --model if we have a valid-looking API identifier
+            if model_id and "-" in model_id:
+                return [str(exe), "--model", model_id]
+            return [str(exe)]
         if os.name == 'nt':
             return ["cmd.exe"]
         else:
@@ -2845,11 +2863,24 @@ class TerminalTab(ctk.CTkFrame):
         self.after(600, lambda: self._start_pty_with(args, cwd))
 
     def _reader(self):
+        """Background thread: read PTY output and push into queue.
+        Empty reads are normal during agy startup — we allow up to 120
+        consecutive empty reads (~6 s at 50 ms poll) before concluding the
+        session has truly ended.
+        """
+        empty_streak = 0
+        MAX_EMPTY = 120  # ~6 seconds of silence before giving up
         while self._running:
             try:
                 chunk = self._pty.read(4096)
-                if chunk: self._q.put(chunk)
-                else: break
+                if chunk:
+                    self._q.put(chunk)
+                    empty_streak = 0  # reset on any real output
+                else:
+                    empty_streak += 1
+                    if empty_streak > MAX_EMPTY:
+                        break  # process truly gone
+                    import time; time.sleep(0.05)  # wait 50 ms and retry
             except Exception:
                 break
         self._running = False
@@ -3040,9 +3071,9 @@ class SettingsTab(ctk.CTkFrame):
         mr.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(mr, text="Model", font=(FONT_BODY, 14),
                      text_color=INK).grid(row=0, column=0, padx=16, pady=14, sticky="w")
-        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "Gemini 3.5 Flash (Medium)"))
-        models = ["Gemini 3.5 Flash (Low)", "Gemini 3.5 Flash (Medium)", "Gemini 3.5 Flash (High)",
-                  "Gemini 3.1 Pro (Low)", "Gemini 3.1 Pro (High)"]
+        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-2.5-flash"))
+        models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+                  "gemini-1.5-flash", "gemini-1.5-pro"]
         ctk.CTkOptionMenu(mr, variable=self._model_var, values=models, width=260, height=36,
                           font=(FONT_BODY, 13), fg_color=BLUE_SOFT, button_color=BLUE,
                           button_hover_color=BLUE_DK, text_color=INK,
