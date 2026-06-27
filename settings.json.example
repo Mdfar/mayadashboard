@@ -1,0 +1,18 @@
+{
+  "font_size": 14,
+  "font_face": "Segoe UI",
+  "theme": "light",
+  "agy_path": "",
+  "model": "Gemini 3.5 Flash (Medium)",
+  "auto_generate": true,
+  "wp_url": "https://yourblog.com",
+  "wp_username": "admin",
+  "wp_app_password": "",
+  "ghost_url": "https://yourblog.ghost.io",
+  "ghost_admin_api_key": "",
+  "git_repo_path": "",
+  "top_picks_instruction": "Research the 5 most important AI and tech developments for today...",
+  "plan_instruction": "Write a daily plan to the target file...",
+  "activities_instruction": "Analyze today's action checklist and draft key progress logs...",
+  "lessons_instruction": "Write 5-10 key lessons learned from today's automation tasks..."
+}

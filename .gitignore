@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Configuration and Database
+settings.json
+agentdb.rvf
+agentdb.rvf.lock
+
+# Brand Guidelines and Personas
+BRAND.md
+VOICE.md
+
+# Generated content database
+content/
+agy_workspace/
+inbox/
+projects/
+.claude/
+
+# Intel module files (track code, ignore secrets and caches)
+intel/gmail_token.json
+intel/__pycache__/

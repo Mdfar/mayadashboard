@@ -1,0 +1,6 @@
+customtkinter>=5.2.0
+pillow>=10.0.0
+tkinterweb>=1.2.1
+markdown>=3.4.0
+requests>=2.31.0
+PyJWT>=2.8.0
