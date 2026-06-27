@@ -2814,7 +2814,7 @@ class TerminalTab(ctk.CTkFrame):
         self._entry.bind("<Down>", self._hist_down)
         pill_button(row, "Send", self._send, "primary", "send", "cream", width=100).grid(row=0, column=1)
 
-    _DEFAULT_CWD = str(BASE_DIR)
+    _DEFAULT_CWD = str(Path.home())  # neutral location; works from any install dir
 
     def _default_args(self):
         exe = agy_exe()
@@ -2904,7 +2904,9 @@ class TerminalTab(ctk.CTkFrame):
                     if empty_streak > MAX_EMPTY:
                         break  # process truly gone
                     import time; time.sleep(0.05)  # wait 50 ms and retry
-            except Exception:
+            except Exception as e:
+                # Show the real error so we can diagnose PTY failures
+                self._q.put(f"\n[PTY error: {type(e).__name__}: {e}]\n")
                 break
         self._running = False
         self._q.put("\n[agy session ended — click Restart]\n")
@@ -3615,7 +3617,17 @@ class DashboardApp(ctk.CTk):
 
         def ask_agy_fn(prompt):
             self._sidebar.select(TERM_IDX)
-            self.after(150, lambda: self._term.send_prompt(prompt))
+            # Wait until the PTY is actually running before sending the prompt.
+            # agy needs up to 2-3 s to start; 150 ms was far too short and
+            # caused "send error: Pty is closed" every time.
+            def _wait_and_send(remaining=40):  # 40 × 100 ms = 4 s max wait
+                if self._term._running:
+                    self._term.send_prompt(prompt)
+                elif remaining > 0:
+                    self.after(100, lambda: _wait_and_send(remaining - 1))
+                else:
+                    self._term._append("\n⚠  agy did not start in time. Click Restart and try again.\n")
+            self.after(200, lambda: _wait_and_send())
 
         self._top     = TopPicksTab(holder, ask_agy_fn=ask_agy_fn)
         self._research = ResearchTab(holder, ask_agy_fn=ask_agy_fn)
