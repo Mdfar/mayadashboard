@@ -2771,6 +2771,8 @@ class TerminalTab(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent, fg_color="transparent")
         self._pty = None
+        self._proc = None          # subprocess.Popen fallback (frozen exe)
+        self._pipe_mode = getattr(sys, 'frozen', False)  # start in pipe mode if frozen
         self._q = queue.Queue()
         self._running = False
         self._history = []
@@ -2865,11 +2867,19 @@ class TerminalTab(ctk.CTkFrame):
             self._status.configure(text="Error", text_color=RED)
 
     def send_prompt(self, text):
-        if not self._pty or not self._running:
+        if not self._running:
             self._append("\n[Terminal not connected — click Restart]\n")
             return
         if text.strip():
             self._history.insert(0, text); self._hist_idx = -1
+        # Pipe mode (frozen exe): run agy --print
+        if self._pipe_mode:
+            self._run_pipe(text)
+            return
+        # PTY mode
+        if not self._pty:
+            self._append("\n[Terminal not connected — click Restart]\n")
+            return
         try:
             self._pty.write(text + "\r")
         except Exception as e:
@@ -2884,6 +2894,9 @@ class TerminalTab(ctk.CTkFrame):
         self._clear()
         self._status.configure(text="Connecting…", text_color=YOLK_DK)
         self.after(600, lambda: self._start_pty_with(args, cwd))
+
+    def _restart(self):
+        self.restart_with_args(self._default_args(), self._DEFAULT_CWD)
 
     def _reader(self):
         """Background thread: read PTY output and push into queue.
@@ -2970,9 +2983,15 @@ class TerminalTab(ctk.CTkFrame):
         tw.insert("end-1c", self._cur_line); tw.see("end")
 
     def _send(self, event=None):
+        text = self._entry.get(); self._entry.delete(0, "end")
+        if not text.strip():
+            return
+        if self._pipe_mode and self._running:
+            self._history.insert(0, text); self._hist_idx = -1
+            self._run_pipe(text)
+            return
         if not self._pty or not self._running:
             return
-        text = self._entry.get(); self._entry.delete(0, "end")
         if text.strip():
             self._history.insert(0, text); self._hist_idx = -1
         try:
