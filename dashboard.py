@@ -3426,12 +3426,22 @@ class DashboardApp(ctk.CTk):
         self.configure(fg_color=BG)
         
         # Set Window Icon
-        icon_path = BUNDLE_DIR / "assets" / "icon.ico"
-        if icon_path.exists() and os.name == 'nt':
+        if os.name == 'nt':
+            import ctypes
             try:
-                self.iconbitmap(str(icon_path))
+                # Register process with Windows shell to force taskbar icon refresh
+                myappid = "mdfar.mayadashboard.workspace.1.0.1"
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             except Exception:
                 pass
+            
+            icon_path = BUNDLE_DIR / "assets" / "icon.ico"
+            if icon_path.exists():
+                try:
+                    self.iconbitmap(str(icon_path))
+                    self.wm_iconbitmap(str(icon_path))
+                except Exception:
+                    pass
         self._build_ui()
         self.after(2500, self._auto_generate)
         
