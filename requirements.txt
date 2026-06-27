@@ -4,3 +4,4 @@ tkinterweb>=1.2.1
 markdown>=3.4.0
 requests>=2.31.0
 PyJWT>=2.8.0
+pywin32>=306; sys_platform == "win32"

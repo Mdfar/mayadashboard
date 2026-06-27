@@ -776,10 +776,24 @@ class TopPicksTab(ctk.CTkFrame):
 
     def _empty_html(self):
         return md_to_html(
-            f"# 🔥 Top Picks\n\n"
-            f"No picks yet for **{TODAY}**.\n\n"
-            f"Click **Refresh with agy** above — agy will research today's top AI/tech "
-            f"developments and write them here. The page updates automatically.\n"
+            f"# Welcome to Maya Developer Workspace! 👋\n\n"
+            f"This dashboard helps you coordinate your daily developer schedule, plan projects, track lessons, and generate professional blog posts.\n\n"
+            f"### 🚀 How to Get Started:\n"
+            f"1. **Set up your AI Executable**: Go to the **Settings** tab and configure your local `agy` path so the dashboard can run commands.\n"
+            f"2. **Fetch Today's Tech News**: Click the **Refresh with agy** button above to launch an automated research task. Once completed, this home screen will automatically update with today's hot picks!\n"
+            f"3. **Plan & Log**: Use the **Activities**, **Plan**, and **Lessons** tabs to manage your daily developer tasks, notes, and checklist items.\n"
+            f"4. **AI Research & Writing (Step 1-5)**: Navigate to the **Research** tab to research practitioner discussions, outline articles, draft SEO-optimized posts, run audits, generate cover banners, and sync your finished articles to WordPress, Ghost CMS, or local Git repositories.\n"
+        )
+
+    def _empty_txt(self):
+        return (
+            f"Welcome to Maya Developer Workspace! \n\n"
+            f"This dashboard helps you coordinate your daily developer schedule, plan projects, track lessons, and generate professional blog posts.\n\n"
+            f"How to Get Started:\n"
+            f"1. Set up your AI Executable: Go to the Settings tab and configure your local 'agy' path so the dashboard can run commands.\n"
+            f"2. Fetch Today's Tech News: Click the 'Refresh with agy' button above to launch an automated research task.\n"
+            f"3. Plan & Log: Use the Activities, Plan, and Lessons tabs to manage your daily developer tasks, notes, and checklist items.\n"
+            f"4. AI Research & Writing: Navigate to the Research tab to research, outline, draft, verify, generate banners, and publish drafts.\n"
         )
 
     @property
@@ -824,7 +838,7 @@ class TopPicksTab(ctk.CTkFrame):
             self._html.load_html(md_to_html(self._raw) if self._raw.strip() else self._empty_html())
         else:
             self._box.delete("1.0", "end")
-            self._box.insert("1.0", self._raw or "No picks yet.")
+            self._box.insert("1.0", self._raw or self._empty_txt())
 
 
 # ── Research Tab (Collaborative AI Research & Writing) ─────────────────────────
@@ -3392,6 +3406,14 @@ class DashboardApp(ctk.CTk):
         self.configure(fg_color=BG)
         self._build_ui()
         self.after(2500, self._auto_generate)
+        
+        # Force window to foreground and focus on launch
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.attributes("-topmost", True)
+        self.after(200, lambda: self.attributes("-topmost", False))
+        
         if HAS_INTEL:
             threading.Thread(target=start_background_poller, daemon=True).start()
             threading.Thread(target=write_context, daemon=True).start()
