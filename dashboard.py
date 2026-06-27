@@ -276,13 +276,12 @@ SETTINGS.update(load_settings())
 def agy_exe() -> Path:
     return Path(SETTINGS.get("agy_path", _detect_agy()))
 
-# Map display names shown in Settings → real agy --model IDs
 _MODEL_ID_MAP = {
-    "Gemini 3.5 Flash":    "gemini-3.5-flash",
-    "Gemini 3.1 Pro":      "gemini-3.1-pro",
-    "Claude Sonnet 4.6":   "claude-4.6-sonnet",
-    "Claude Opus 4.6":     "claude-4.6-opus",
-    "GPT-OSS 120B":        "gpt-oss-120b",
+    "Gemini 3.5 Flash (Low)":    "gemini-3.5-flash-low",
+    "Gemini 3.5 Flash (Medium)": "gemini-3.5-flash-medium",
+    "Gemini 3.5 Flash (High)":   "gemini-3.5-flash-high",
+    "Gemini 3.1 Pro (Low)":      "gemini-3.1-pro-low",
+    "Gemini 3.1 Pro (High)":     "gemini-3.1-pro-high",
 }
 
 def agy_model() -> str:
@@ -547,6 +546,9 @@ def clean_env() -> dict:
     We remove / restore all of them so agy.EXE sees a stock system env.
     """
     env = os.environ.copy()
+    env["AGY_NO_PLUGINS"] = "1"
+    env["AGY_NO_MCP"] = "1"
+    env["AGY_NO_TOOLS"] = "1"
     if not getattr(sys, 'frozen', False):
         return env  # running from source, nothing to clean
 
@@ -2875,7 +2877,7 @@ class TerminalTab(ctk.CTkFrame):
     def _run_pipe(self, prompt: str, display_text: str = None):
         exe = agy_exe()
         exe_str = str(exe) if exe.exists() else (shutil.which("agy") or "agy")
-        cmd = [exe_str, "--print", prompt]
+        cmd = [exe_str, "--print", prompt, "--dangerously-skip-permissions", "--sandbox"]
         model_id = agy_model()
         if model_id and "-" in model_id:
             cmd.extend(["--model", model_id])
@@ -3156,13 +3158,13 @@ class SettingsTab(ctk.CTkFrame):
         mr.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(mr, text="Model", font=(FONT_BODY, 14),
                      text_color=INK).grid(row=0, column=0, padx=16, pady=14, sticky="w")
-        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-3.5-flash"))
+        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-3.5-flash-medium"))
         models = [
-            "Gemini 3.5 Flash",
-            "Gemini 3.1 Pro",
-            "Claude Sonnet 4.6",
-            "Claude Opus 4.6",
-            "GPT-OSS 120B"
+            "Gemini 3.5 Flash (Low)",
+            "Gemini 3.5 Flash (Medium)",
+            "Gemini 3.5 Flash (High)",
+            "Gemini 3.1 Pro (Low)",
+            "Gemini 3.1 Pro (High)"
         ]
         ctk.CTkOptionMenu(mr, variable=self._model_var, values=models, width=260, height=36,
                           font=(FONT_BODY, 13), fg_color=BLUE_SOFT, button_color=BLUE,
