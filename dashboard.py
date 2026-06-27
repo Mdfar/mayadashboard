@@ -219,7 +219,7 @@ DEFAULT_SETTINGS = {
     "font_face": "Segoe UI",
     "theme": "light",
     "agy_path": _detect_agy(),
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.5-flash",
     "auto_generate": True,
     "top_picks_instruction": (
         "Research the 5 most important AI and tech developments for today. "
@@ -295,6 +295,12 @@ def agy_exe() -> Path:
 
 # Map display names shown in Settings → real agy --model IDs
 _MODEL_ID_MAP = {
+    "Gemini 3.5 Flash":    "gemini-3.5-flash",
+    "Gemini 3.5 Pro":      "gemini-3.5-pro",
+    "Gemini 3.1 Flash":    "gemini-3.1-flash",
+    "Gemini 3.1 Pro":      "gemini-3.1-pro",
+    "Gemini 3.0 Flash":    "gemini-3.0-flash",
+    "Gemini 3.0 Pro":      "gemini-3.0-pro",
     "Gemini 2.5 Flash":    "gemini-2.5-flash",
     "Gemini 2.5 Pro":      "gemini-2.5-pro",
     "Gemini 2.0 Flash":    "gemini-2.0-flash",
@@ -304,11 +310,11 @@ _MODEL_ID_MAP = {
 
 def agy_model() -> str:
     """Return the real API model ID that agy --model accepts."""
-    display = SETTINGS.get("model", "gemini-2.5-flash")
+    display = SETTINGS.get("model", "gemini-3.5-flash")
     # If it's already an API id (contains a dash), use as-is
     if "-" in display:
         return display
-    return _MODEL_ID_MAP.get(display, "gemini-2.5-flash")
+    return _MODEL_ID_MAP.get(display, "gemini-3.5-flash")
 
 def build_prompt(instruction: str, kind: str, ds: str) -> str:
     """Attach the concrete, date-correct target file path to a user instruction."""
@@ -3115,9 +3121,15 @@ class SettingsTab(ctk.CTkFrame):
         mr.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(mr, text="Model", font=(FONT_BODY, 14),
                      text_color=INK).grid(row=0, column=0, padx=16, pady=14, sticky="w")
-        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-2.5-flash"))
-        models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-                  "gemini-1.5-flash", "gemini-1.5-pro"]
+        self._model_var = ctk.StringVar(value=SETTINGS.get("model", "gemini-3.5-flash"))
+        models = [
+            "gemini-3.5-flash", "gemini-3.5-pro",
+            "gemini-3.1-flash", "gemini-3.1-pro",
+            "gemini-3.0-flash", "gemini-3.0-pro",
+            "gemini-2.5-flash", "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash", "gemini-1.5-pro"
+        ]
         ctk.CTkOptionMenu(mr, variable=self._model_var, values=models, width=260, height=36,
                           font=(FONT_BODY, 13), fg_color=BLUE_SOFT, button_color=BLUE,
                           button_hover_color=BLUE_DK, text_color=INK,
