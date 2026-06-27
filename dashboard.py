@@ -1346,6 +1346,7 @@ class ResearchTab(ctk.CTkFrame):
                     m = p.stat().st_mtime
                     if self._last_mtimes.get(k) != m:
                         self._last_mtimes[k] = m
+                        self._dismiss_loading()
                         if k == self._active_view:
                             self.rerender()
                     if lbl:
@@ -1361,6 +1362,7 @@ class ResearchTab(ctk.CTkFrame):
                 m = prompt_file.stat().st_mtime
                 if self._last_mtimes.get("image_prompts") != m:
                     self._last_mtimes["image_prompts"] = m
+                    self._dismiss_loading()
                     self._load_image_prompts(prompt_file)
             else:
                 self._last_mtimes["image_prompts"] = None
@@ -1375,6 +1377,7 @@ class ResearchTab(ctk.CTkFrame):
                     state = (len(files), sum(f.stat().st_mtime for f in files))
                     if self._last_mtimes.get("gallery") != state:
                         self._last_mtimes["gallery"] = state
+                        self._dismiss_loading()
                         self.rerender()
 
             # Poll diff view
@@ -1385,6 +1388,7 @@ class ResearchTab(ctk.CTkFrame):
                     state = (p_draft.stat().st_mtime, p_bak.stat().st_mtime)
                     if self._last_mtimes.get("diff") != state:
                         self._last_mtimes["diff"] = state
+                        self._dismiss_loading()
                         self.rerender()
         except Exception:
             pass
@@ -1408,6 +1412,14 @@ class ResearchTab(ctk.CTkFrame):
             pass
         self._img_prompts_menu.configure(values=["No prompts generated yet"])
         self._img_prompts_menu.set("No prompts generated yet")
+
+    def _dismiss_loading(self):
+        if hasattr(self, "_loading_popup") and self._loading_popup:
+            try:
+                self._loading_popup.destroy()
+            except Exception:
+                pass
+            self._loading_popup = None
 
     def _upload_image(self):
         from tkinter import filedialog
@@ -1462,6 +1474,7 @@ class ResearchTab(ctk.CTkFrame):
         prompt = f"{command}\n\nTARGET FILE (write here, overwrite it): {dest_file}"
         
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
 
     def _get_diff_html(self) -> str:
@@ -1565,6 +1578,7 @@ class ResearchTab(ctk.CTkFrame):
             command = f"/blog image generate \"{prompt_text}\""
             prompt = f"{command}\n\nTARGET FILE (write here, overwrite it): {dest_file}"
             if self._ask_agy_fn:
+                self._loading_popup = GeneratingPopup(self.winfo_toplevel())
                 self._ask_agy_fn(prompt)
                 APP.toast("Pillow fallback. Querying AI image generator...", "ok")
 
@@ -1724,6 +1738,7 @@ class ResearchTab(ctk.CTkFrame):
         
         prompt = f"{instr}\n\nTARGET FILE (write here, overwrite it): {social_file}"
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
             APP.toast("Repurposing draft for social threads...", "ok")
 
@@ -1753,6 +1768,7 @@ class ResearchTab(ctk.CTkFrame):
         
         prompt = f"{instr}\n\nTARGET FILE (write here, overwrite it): {target_file}"
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
 
     def _run_outline(self):
@@ -1782,6 +1798,7 @@ class ResearchTab(ctk.CTkFrame):
         
         prompt = f"{instr}\n\nTARGET FILE (write here, overwrite it): {outline_file}"
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
 
     def _run_draft(self):
@@ -1840,6 +1857,7 @@ class ResearchTab(ctk.CTkFrame):
         
         prompt = f"{instr}\n\nTARGET FILE (write here, overwrite it): {draft_file}"
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
 
     def _run_qa(self):
@@ -1867,6 +1885,7 @@ class ResearchTab(ctk.CTkFrame):
         
         prompt = f"{instr}\n\nTARGET FILE (write here, overwrite it): {review_file}"
         if self._ask_agy_fn:
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(prompt)
 
 
