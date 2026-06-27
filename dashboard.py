@@ -2772,7 +2772,7 @@ class TerminalTab(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self._pty = None
         self._proc = None          # subprocess.Popen fallback (frozen exe)
-        self._pipe_mode = getattr(sys, 'frozen', False)  # start in pipe mode if frozen
+        self._pipe_mode = False    # try PTY first, fallback to pipe if it fails
         self._q = queue.Queue()
         self._running = False
         self._history = []

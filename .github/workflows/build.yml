@@ -35,7 +35,7 @@ jobs:
       - name: Build with PyInstaller (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon="assets/icon.ico" --add-data "assets;assets" --name "MayaDashboard" dashboard.py
+          pyinstaller --noconfirm --onefile --hide-console hide-early --icon="assets/icon.ico" --add-data "assets;assets" --name "MayaDashboard" dashboard.py
 
       - name: Build with PyInstaller (macOS)
         if: matrix.os == 'macos-latest'
