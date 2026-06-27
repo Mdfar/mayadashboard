@@ -2,7 +2,7 @@
 """MAYA — Antigravity AI Dashboard (light theme, interactive)"""
 
 import customtkinter as ctk
-import subprocess, json, os, shutil, threading, queue, re, uuid, time, sys
+import subprocess, json, os, shutil, threading, queue, re, uuid, time, sys, webbrowser
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
@@ -3287,9 +3287,35 @@ class StatusBar(ctk.CTkFrame):
             row=0, column=0, padx=16, pady=8, sticky="w")
         ctk.CTkLabel(self, text=f"content · {CONTENT_DIR}", font=(FONT_BODY, 12),
                      text_color=DIM).grid(row=0, column=1, padx=12, sticky="w")
+        
+        # Version and Update Check Label
+        self._ver_lbl = ctk.CTkLabel(self, text="v1.0.0", font=(FONT_BODY, 12), text_color=DIM, cursor="hand2")
+        self._ver_lbl.grid(row=0, column=2, padx=12, sticky="e")
+        self._ver_lbl.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/Mdfar/mayadashboard/releases"))
+        
         self._clock = ctk.CTkLabel(self, text="", font=(FONT_BODY, 12), text_color=INK2)
-        self._clock.grid(row=0, column=2, padx=16, sticky="e")
+        self._clock.grid(row=0, column=3, padx=16, sticky="e")
         self._tick()
+        
+        # Run background check for update
+        import threading
+        threading.Thread(target=self._check_update, daemon=True).start()
+
+    def _check_update(self):
+        import requests
+        try:
+            res = requests.get("https://automationfunda.com/app-metadata.json", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                latest = data.get("version", "v1.0.0")
+                if latest != "v1.0.0":
+                    self.after(0, lambda: self._ver_lbl.configure(
+                        text=f"● Update Available ({latest})",
+                        text_color=BLUE,
+                        font=(FONT_BODY, 12, "bold")
+                    ))
+        except Exception:
+            pass
 
     def _tick(self):
         self._clock.configure(text=datetime.now().strftime("%A, %B %d  ·  %H:%M:%S"))
