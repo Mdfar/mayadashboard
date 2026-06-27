@@ -2731,7 +2731,13 @@ class TerminalTab(ctk.CTkFrame):
     _DEFAULT_CWD = str(BASE_DIR)
 
     def _default_args(self):
-        return [str(agy_exe()), "--model", agy_model()]
+        exe = agy_exe()
+        if exe.exists() or shutil.which(str(exe)) or shutil.which("agy"):
+            return [str(exe), "--model", agy_model()]
+        if os.name == 'nt':
+            return ["cmd.exe"]
+        else:
+            return ["/bin/bash", "-i"]
 
     def _start_pty(self):
         self._start_pty_with(self._default_args(), self._DEFAULT_CWD)
@@ -2744,14 +2750,28 @@ class TerminalTab(ctk.CTkFrame):
             self._append("⚠  winpty not installed. Run:  pip install pywinpty\n")
             self._status.configure(text="pywinpty missing", text_color=RED)
             return
+        
+        exe_path = args[0]
+        is_fallback = ("cmd.exe" in exe_path or "bash" in exe_path or "sh" in exe_path)
+        
+        if not is_fallback:
+            p = Path(exe_path)
+            if not (p.exists() or shutil.which(exe_path) or shutil.which("agy")):
+                self._append(f"⚠  agy CLI executable not found at: '{exe_path}'\n")
+                self._append("Please install it or configure the path in the Settings tab.\n")
+                self._append("Spawning fallback system shell...\n\n")
+                args = ["cmd.exe"] if os.name == 'nt' else ["/bin/bash", "-i"]
+                is_fallback = True
+
         try:
             self._pty = winpty.PtyProcess.spawn(args, cwd=cwd, dimensions=(40, 220))
             self._running = True
-            self._status.configure(text="● Connected", text_color=GREEN)
+            status_text = "● Shell Connected" if is_fallback else "● agy Connected"
+            self._status.configure(text=status_text, text_color=GREEN)
             threading.Thread(target=self._reader, daemon=True).start()
             self.after(self.POLL_MS, self._poll_queue)
         except Exception as e:
-            self._append(f"⚠  Failed to start agy: {e}\n")
+            self._append(f"⚠  Failed to spawn process {args}: {e}\n")
             self._status.configure(text="Error", text_color=RED)
 
     def send_prompt(self, text):
