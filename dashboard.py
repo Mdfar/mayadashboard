@@ -3424,6 +3424,14 @@ class DashboardApp(ctk.CTk):
         self.geometry(WIN_SIZE)
         self.minsize(1080, 680)
         self.configure(fg_color=BG)
+        
+        # Set Window Icon
+        icon_path = BUNDLE_DIR / "assets" / "icon.ico"
+        if icon_path.exists() and os.name == 'nt':
+            try:
+                self.iconbitmap(str(icon_path))
+            except Exception:
+                pass
         self._build_ui()
         self.after(2500, self._auto_generate)
         
