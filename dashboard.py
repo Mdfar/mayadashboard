@@ -837,8 +837,9 @@ class TopPicksTab(ctk.CTkFrame):
 
         hdr = TabHeader(self, "Top Picks Today", f"Hot AI & tech for {TODAY}", "top_picks")
         hdr.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
-        pill_button(hdr.actions, "Refresh with agy", self._ask, "accent",
-                    "sparkles", "ink").grid(row=0, column=0, padx=4)
+        self._btn_ask = pill_button(hdr.actions, "Refresh with agy", self._ask, "accent",
+                    "sparkles", "ink")
+        self._btn_ask.grid(row=0, column=0, padx=4)
         pill_button(hdr.actions, "Edit instruction", self._edit_instr, "ghost",
                     "edit", "ink").grid(row=0, column=1, padx=4)
 
@@ -883,6 +884,7 @@ class TopPicksTab(ctk.CTkFrame):
         instr = SETTINGS.get("top_picks_instruction", "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
+            self._btn_ask.configure(text="  Generating...", state="disabled")
             self._ask_agy_fn(build_prompt(instr, "top_picks", ds))
         else:
             launch_agy()
@@ -913,6 +915,9 @@ class TopPicksTab(ctk.CTkFrame):
         self.after(self.POLL_MS, self._poll)
 
     def rerender(self):
+        if hasattr(self, "_btn_ask"):
+            self._btn_ask.configure(text="  Refresh with agy", state="normal")
+            
         if self._html:
             self._html.load_html(md_to_html(self._raw) if self._raw.strip() else self._empty_html())
         else:
@@ -1928,8 +1933,9 @@ class PlanTab(JsonTab):
 
         hdr = TabHeader(self, "Today's Plan", f"Structured day · {TODAY}", "plan")
         hdr.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 8))
-        pill_button(hdr.actions, "Generate with agy", self._ask, "accent",
-                    "sparkles", "ink").grid(row=0, column=0, padx=4)
+        self._btn_ask = pill_button(hdr.actions, "Generate with agy", self._ask, "accent",
+                    "sparkles", "ink")
+        self._btn_ask.grid(row=0, column=0, padx=4)
         pill_button(hdr.actions, "Edit instruction", self._edit_instr, "ghost",
                     "edit", "ink").grid(row=0, column=1, padx=4)
 
@@ -2510,8 +2516,9 @@ class LessonsTab(ctk.CTkFrame):
     def _build(self):
         hdr = TabHeader(self, "Lessons", "Your AI learning course", "lessons")
         hdr.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 8))
-        pill_button(hdr.actions, "Generate with agy", self._ask, "accent",
-                    "sparkles", "ink").grid(row=0, column=0, padx=4)
+        self._btn_ask = pill_button(hdr.actions, "Generate with agy", self._ask, "accent",
+                    "sparkles", "ink")
+        self._btn_ask.grid(row=0, column=0, padx=4)
         pill_button(hdr.actions, "Edit instruction", self._edit_instr, "ghost",
                     "edit", "ink").grid(row=0, column=1, padx=4)
         pill_button(hdr.actions, "Refresh", self._load_all, "ghost",
@@ -2551,6 +2558,7 @@ class LessonsTab(ctk.CTkFrame):
         instr = SETTINGS.get("lessons_instruction", "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
+            self._btn_ask.configure(text="  Generating...", state="disabled")
             self._ask_agy_fn(build_prompt(instr, "lessons", ds))
         else:
             launch_agy()
@@ -2632,6 +2640,8 @@ class LessonsTab(ctk.CTkFrame):
 
     # ── render ──
     def render(self):
+        if hasattr(self, "_btn_ask"):
+            self._btn_ask.configure(text="  Generate with agy", state="normal")
         for w in self._sidebar.winfo_children():
             w.destroy()
         for w in self._reading.winfo_children():
@@ -3687,7 +3697,6 @@ class DashboardApp(ctk.CTk):
             if isinstance(prompt, tuple):
                 prompt, display = prompt
                 
-            self._sidebar.select(TERM_IDX)
             # Wait until the PTY is actually running before sending the prompt.
             # agy needs up to 2-3 s to start; 150 ms was far too short and
             # caused "send error: Pty is closed" every time.
