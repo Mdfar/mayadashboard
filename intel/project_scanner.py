@@ -68,8 +68,8 @@ def build_registry() -> dict:
             "name":           prev.get("name", Path(path).name or path),
             "path":           path,
             "status":         prev.get("status", "active"),
-            "platform":       prev.get("platform", "upwork" if Path(path).exists() else "local"),
-            "client":         prev.get("client", ""),
+            "category":       prev.get("category", prev.get("platform", "local")),
+            "technologies":   prev.get("technologies", ""),
             "notes":          prev.get("notes", ""),
             "next_actions":   prev.get("next_actions", []),
             "last_agy_date":  last_date,
@@ -96,6 +96,81 @@ def refresh_registry() -> dict:
     reg = build_registry()
     save_registry(reg)
     return reg
+
+def get_git_info(path: str) -> dict:
+    import subprocess
+    p = Path(path)
+    if not p.exists() or not (p / ".git").exists():
+        return {"is_git": False}
+        
+    try:
+        # Get active branch
+        branch_res = subprocess.run(["git", "branch", "--show-current"], 
+                                    cwd=path, capture_output=True, text=True, timeout=2)
+        branch = branch_res.stdout.strip() if branch_res.returncode == 0 else "unknown"
+        
+        # Get porcelain status (changed files)
+        status_res = subprocess.run(["git", "status", "--porcelain"], 
+                                    cwd=path, capture_output=True, text=True, timeout=2)
+        status_lines = status_res.stdout.splitlines() if status_res.returncode == 0 else []
+        
+        # Get recent commit log (last 5 commits)
+        log_res = subprocess.run(["git", "log", "-n", "5", "--oneline"], 
+                                 cwd=path, capture_output=True, text=True, timeout=2)
+        log_lines = log_res.stdout.splitlines() if log_res.returncode == 0 else []
+        
+        return {
+            "is_git": True,
+            "branch": branch,
+            "changed_files": status_lines,
+            "recent_commits": log_lines
+        }
+    except Exception as e:
+        return {"is_git": True, "error": str(e)}
+
+def get_project_stats(path: str) -> dict:
+    import os
+    p = Path(path)
+    if not p.exists():
+        return {}
+        
+    file_counts = defaultdict(int)
+    total_loc = 0
+    total_size = 0
+    
+    # Exclude common large folders
+    exclude_dirs = {".git", ".venv", "node_modules", "build", "dist", "__pycache__"}
+    
+    try:
+        for root, dirs, files in os.walk(p):
+            # Prune exclude directories in-place
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            
+            for file in files:
+                fpath = Path(root) / file
+                if fpath.is_symlink():
+                    continue
+                try:
+                    stat = fpath.stat()
+                    total_size += stat.st_size
+                    ext = fpath.suffix.lower()
+                    if ext in {".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".md", ".json", ".sql", ".sh", ".bat"}:
+                        file_counts[ext] += 1
+                        
+                        # Approximated LOC count
+                        if stat.st_size < 1024 * 1024:  # skip files larger than 1MB for safety
+                            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                                total_loc += sum(1 for _ in f)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+        
+    return {
+        "file_counts": dict(file_counts),
+        "total_loc": total_loc,
+        "total_size_mb": round(total_size / (1024 * 1024), 2)
+    }
 
 if __name__ == "__main__":
     reg = refresh_registry()

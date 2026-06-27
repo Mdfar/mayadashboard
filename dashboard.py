@@ -10,9 +10,8 @@ from PIL import Image
 # ── Intel module (project intelligence) ───────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from intel.project_scanner import load_registry, refresh_registry, save_registry
+    from intel.project_scanner import load_registry, refresh_registry, save_registry, get_git_info, get_project_stats
     from intel.agy_parser import get_all_project_history
-    from intel.gmail_poller import load_inbox, start_background_poller, is_configured
     from intel.context_builder import write_context
     HAS_INTEL = True
 except Exception as _intel_err:
@@ -21,9 +20,8 @@ except Exception as _intel_err:
     def refresh_registry(): return {"projects": []}
     def save_registry(r): pass
     def get_all_project_history(p, limit=20): return []
-    def load_inbox(days=30): return []
-    def start_background_poller(): pass
-    def is_configured(): return False
+    def get_git_info(path): return {"is_git": False}
+    def get_project_stats(path): return {}
     def write_context(): pass
 
 try:
@@ -259,15 +257,62 @@ DEFAULT_SETTINGS = {
 
 SETTINGS: dict = {}
 
+def clean_instruction(text: str) -> str:
+    if not text:
+        return ""
+    patterns = [
+        # HTML/Top Picks patterns
+        r"\s*For each entry, generate a beautiful HTML card.*",
+        r"\s*Write raw HTML directly to the target file.*",
+        r"\s*Do not wrap in markdown backticks.*",
+        r"\s*Overwrite the file completely.*",
+        
+        # JSON/Plan/Lessons patterns
+        r"\s*Write JSON using EXACTLY this schema.*",
+        r"\s*Write JSON using.*",
+        r"\s*Output ONLY valid JSON to the target file.*",
+        r"\s*learned is always false initially.*",
+        r"\s*Sections: Morning, Afternoon, Evening.*",
+        r"\s*priority is one of high\|medium\|low.*",
+        r"\s*id must be unique.*",
+        r"\s*status is one of active\|pending\|done\|blocked.*",
+        r"\s*Add 3 useful recommendations based on the tasks.*",
+        r"\s*learned is always false initially\. id unique.*",
+        r"\s*learned is always false.*",
+        
+        # Extra/Common boilerplate
+        r"\s*to the file [^\s]+.*",
+        r"\s*Use sections: MORNING.*",
+        r"\s*Use checkboxes.*",
+        r"\s*Overwrite the file.*",
+        r"\s*Do not explain, just write the file.*",
+        r"\s*Do not explain, just write it.*",
+        r"\s*Do not explain.*"
+    ]
+    cleaned = text
+    for pat in patterns:
+        cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = cleaned.strip()
+    if cleaned.endswith(".") and not cleaned.endswith(".."):
+        cleaned = cleaned[:-1]
+    return cleaned.strip() + "."
+
 def load_settings() -> dict:
+    data = dict(DEFAULT_SETTINGS)
     if SETTINGS_FILE.exists():
         try:
-            return {**DEFAULT_SETTINGS, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
+            data.update(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
         except Exception:
             pass
-    return dict(DEFAULT_SETTINGS)
+    for k in ["top_picks_instruction", "plan_instruction", "activities_instruction", "lessons_instruction"]:
+        if k in data:
+            data[k] = clean_instruction(data[k])
+    return data
 
 def save_settings(s: dict):
+    for k in ["top_picks_instruction", "plan_instruction", "activities_instruction", "lessons_instruction"]:
+        if k in s:
+            s[k] = clean_instruction(s[k])
     SETTINGS_FILE.write_text(json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
     SETTINGS.update(s)
 
@@ -295,15 +340,16 @@ def agy_model() -> str:
 def build_prompt(instruction: str, kind: str, ds: str) -> tuple:
     """Attach the concrete, date-correct target file path and schema to a user instruction."""
     target = path_for(kind, ds)
+    clean_instr = clean_instruction(instruction)
     schema_map = {
-        "top_picks": f"Write raw HTML directly to the target file. Do not wrap in markdown backticks. Overwrite the file completely. Do not explain, just write it.\n{TOP_PICKS_SCHEMA}",
+        "top_picks": f"Write raw HTML directly to the target file. Do not wrap in markdown backticks. Overwrite the file completely. Do not explain, just write the file.\n{TOP_PICKS_SCHEMA}",
         "plan": f"Write JSON using EXACTLY this schema: {PLAN_SCHEMA} . Sections: Morning, Afternoon, Evening. priority is one of high|medium|low. id must be unique. Output ONLY valid JSON to the target file. Do not explain.",
         "activities": f"Write JSON using EXACTLY this schema: {ACT_SCHEMA} . status is one of active|pending|done|blocked. Add 3 useful recommendations based on the tasks. Output ONLY valid JSON to the target file. Do not explain.",
         "lessons": f"Write JSON using EXACTLY this schema: {LES_SCHEMA} . learned is always false initially. id unique. Output ONLY valid JSON to the target file. Do not explain."
     }
     system_instr = schema_map.get(kind, "")
-    full_prompt = f"{instruction} {system_instr}\n\nTARGET FILE (write here, overwrite it): {target}"
-    return full_prompt, instruction
+    full_prompt = f"{clean_instr} {system_instr}\n\nTARGET FILE (write here, overwrite it): {target}"
+    return full_prompt, clean_instr
 
 # Set by DashboardApp at startup; gives tabs access to current_date + toast().
 APP = None
@@ -2229,7 +2275,7 @@ class ActivitiesTab(ctk.CTkFrame):
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def _build(self):
-        hdr = TabHeader(self, "Activities", "Project intelligence · agy history · Upwork inbox", "activities")
+        hdr = TabHeader(self, "Activities", "Project intelligence · agy history · Git repository", "activities")
         hdr.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 8))
         pill_button(hdr.actions, "Update CONTEXT", self._update_context, "accent",
                     "sparkles", "ink").grid(row=0, column=0, padx=4)
@@ -2283,9 +2329,11 @@ class ActivitiesTab(ctk.CTkFrame):
         color = _PROJECT_STATUS_COLOR.get(p.get("status", "active"), DIM)
         last = p.get("last_agy_date", "")
         msgs = p.get("agy_msg_count", 0)
-        inbox_count = sum(1 for i in load_inbox(7)
-                         if p["path"].lower() in i.get("body","").lower()
-                         or p["name"].lower() in i.get("subject","").lower())
+        
+        changed_count = 0
+        git_info = get_git_info(p["path"])
+        if git_info.get("is_git"):
+            changed_count = len(git_info.get("changed_files", []))
 
         btn = ctk.CTkButton(
             self._proj_scroll, text="", anchor="w", height=62, corner_radius=10,
@@ -2307,7 +2355,7 @@ class ActivitiesTab(ctk.CTkFrame):
 
         meta = f"{msgs} agy msgs"
         if last: meta += f"  ·  {last}"
-        if inbox_count: meta += f"  ·  {inbox_count} inbox"
+        if changed_count: meta += f"  ·  {changed_count} changes"
         ctk.CTkLabel(inner, text=meta, font=(FONT_BODY, 10), text_color=DIM, anchor="w").grid(
             row=1, column=1, sticky="w", pady=(0, 10))
 
@@ -2352,8 +2400,14 @@ class ActivitiesTab(ctk.CTkFrame):
         ctk.CTkLabel(ph, text=p.get("path",""), font=("Consolas", 11), text_color=DIM, anchor="w").grid(
             row=1, column=0, sticky="w", padx=16, pady=(0, 4))
 
+        meta_str = f"Category: {p.get('category', 'work').upper()}"
+        if p.get("technologies"):
+            meta_str += f"   ·   Tech: {p['technologies']}"
+        ctk.CTkLabel(ph, text=meta_str, font=(FONT_BODY, 12, "bold"), text_color=BLUE, anchor="w").grid(
+            row=2, column=0, sticky="w", padx=16, pady=(0, 8))
+
         btns_row = ctk.CTkFrame(ph, fg_color="transparent")
-        btns_row.grid(row=2, column=0, sticky="w", padx=12, pady=(0, 12))
+        btns_row.grid(row=3, column=0, sticky="w", padx=12, pady=(0, 12))
         pill_button(btns_row, "Open in agy", lambda pp=p: self._open_in_agy(pp),
                     "primary", "sparkles", "cream").pack(side="left", padx=4)
         pill_button(btns_row, "Brief agy", lambda pp=p: self._brief_agy(pp),
@@ -2397,22 +2451,102 @@ class ActivitiesTab(ctk.CTkFrame):
         pill_button(add_row, "Add", lambda pp=p, en=entry: self._add_action(pp, en),
                     "primary", "plus", "cream", width=70).grid(row=0, column=1)
 
-        # ── Upwork Inbox ──────────────────────────────────────────────────────
-        inbox_items = [i for i in load_inbox(30)
-                       if p["path"].lower() in i.get("body","").lower()
-                       or p["name"].lower() in i.get("subject","").lower()
-                       or "upwork" in i.get("source","")]
-        row = self._section(row, f"Upwork Inbox ({len(inbox_items)})")
-        if not inbox_items:
-            empty = card_frame(self._detail)
-            empty.grid(row=row, column=0, sticky="ew", pady=(0, 10)); row += 1
-            gmail_status = "Gmail not configured — see Setup below" if not is_configured() else "No Upwork messages yet"
-            ctk.CTkLabel(empty, text=gmail_status, font=(FONT_BODY, 12, "italic"),
-                         text_color=DIM).grid(row=0, column=0, padx=16, pady=12, sticky="w")
+        # ── Git Repository ───────────────────────────────────────────────────
+        git_info = get_git_info(p["path"])
+        row = self._section(row, "Git Repository Status")
+        git_card = card_frame(self._detail)
+        git_card.grid(row=row, column=0, sticky="ew", pady=(0, 10)); row += 1
+        git_card.grid_columnconfigure(0, weight=1)
+        
+        if not git_info.get("is_git"):
+            ctk.CTkLabel(git_card, text="Not a Git repository. Run 'git init' to track this codebase.",
+                         font=(FONT_BODY, 12, "italic"), text_color=DIM).grid(
+                row=0, column=0, padx=16, pady=12, sticky="w")
         else:
-            for item in inbox_items[:8]:
-                ic = self._inbox_card(item)
-                ic.grid(row=row, column=0, sticky="ew", pady=3); row += 1
+            # Active branch
+            branch_frame = ctk.CTkFrame(git_card, fg_color="transparent")
+            branch_frame.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 4))
+            ctk.CTkLabel(branch_frame, text="Active Branch: ", font=(FONT_BODY, 12, "bold"), text_color=INK).pack(side="left")
+            ctk.CTkLabel(branch_frame, text=git_info.get("branch", "unknown"), font=("Consolas", 12, "bold"), text_color=GREEN, fg_color=GREEN_SOFT, corner_radius=6, padx=8, pady=2).pack(side="left")
+            
+            # Changed files
+            changed_files = git_info.get("changed_files", [])
+            if not changed_files:
+                ctk.CTkLabel(git_card, text="● Clean (No uncommitted changes)", font=(FONT_BODY, 12, "bold"), text_color=GREEN).grid(
+                    row=1, column=0, padx=16, pady=(4, 10), sticky="w")
+            else:
+                ctk.CTkLabel(git_card, text=f"Uncommitted Changes ({len(changed_files)} files):", font=(FONT_BODY, 12, "bold"), text_color=YOLK_DK).grid(
+                    row=1, column=0, padx=16, pady=(4, 2), sticky="w")
+                
+                scroll_files = ctk.CTkFrame(git_card, fg_color=BG2, corner_radius=8)
+                scroll_files.grid(row=2, column=0, sticky="ew", padx=16, pady=(2, 10))
+                scroll_files.grid_columnconfigure(0, weight=1)
+                
+                file_row = 0
+                for f in changed_files[:5]:
+                    color = RED if f.startswith("D") or f.startswith(" D") else (GREEN if "??" in f else YOLK_DK)
+                    ctk.CTkLabel(scroll_files, text=f"  {f}", font=("Consolas", 12), text_color=color, anchor="w").grid(row=file_row, column=0, sticky="w", pady=2)
+                    file_row += 1
+                if len(changed_files) > 5:
+                    ctk.CTkLabel(scroll_files, text=f"  ... and {len(changed_files) - 5} more files", font=(FONT_BODY, 11, "italic"), text_color=DIM, anchor="w").grid(row=file_row, column=0, sticky="w", pady=2)
+            
+            # Recent commits
+            commits = git_info.get("recent_commits", [])
+            if commits:
+                ctk.CTkLabel(git_card, text="Recent Commits:", font=(FONT_BODY, 12, "bold"), text_color=INK).grid(
+                    row=3, column=0, padx=16, pady=(4, 2), sticky="w")
+                commit_box = ctk.CTkFrame(git_card, fg_color="transparent")
+                commit_box.grid(row=4, column=0, sticky="ew", padx=16, pady=(2, 10))
+                commit_box.grid_columnconfigure(0, weight=1)
+                for ci, commit in enumerate(commits[:3]):
+                    parts = commit.split(" ", 1)
+                    shas = parts[0]
+                    cmsg = parts[1] if len(parts) > 1 else ""
+                    row_c = ctk.CTkFrame(commit_box, fg_color="transparent")
+                    row_c.grid(row=ci, column=0, sticky="ew", pady=1)
+                    ctk.CTkLabel(row_c, text=shas, font=("Consolas", 12, "bold"), text_color=BLUE, width=70).pack(side="left")
+                    ctk.CTkLabel(row_c, text=cmsg, font=(FONT_BODY, 12), text_color=INK2, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+
+        # ── Workspace Metrics ────────────────────────────────────────────────
+        stats = get_project_stats(p["path"])
+        row = self._section(row, "Workspace Metrics")
+        stats_card = card_frame(self._detail)
+        stats_card.grid(row=row, column=0, sticky="ew", pady=(0, 10)); row += 1
+        stats_card.grid_columnconfigure(0, weight=1)
+        
+        if not stats:
+            ctk.CTkLabel(stats_card, text="No metrics available (empty or inaccessible path).",
+                         font=(FONT_BODY, 12, "italic"), text_color=DIM).grid(
+                row=0, column=0, padx=16, pady=12, sticky="w")
+        else:
+            grid_m = ctk.CTkFrame(stats_card, fg_color="transparent")
+            grid_m.grid(row=0, column=0, sticky="ew", padx=16, pady=12)
+            grid_m.grid_columnconfigure((0, 1, 2), weight=1)
+            
+            b1 = ctk.CTkFrame(grid_m, fg_color=BG2, corner_radius=10, border_width=1, border_color=BORDER)
+            b1.grid(row=0, column=0, padx=6, pady=4, sticky="nsew")
+            ctk.CTkLabel(b1, text="Total Size", font=(FONT_BODY, 11), text_color=DIM).pack(pady=(8, 2))
+            ctk.CTkLabel(b1, text=f"{stats.get('total_size_mb', 0.0)} MB", font=(FONT_HEAD, 16, "bold"), text_color=BLUE).pack(pady=(0, 8))
+            
+            b2 = ctk.CTkFrame(grid_m, fg_color=BG2, corner_radius=10, border_width=1, border_color=BORDER)
+            b2.grid(row=0, column=1, padx=6, pady=4, sticky="nsew")
+            ctk.CTkLabel(b2, text="Approximated LOC", font=(FONT_BODY, 11), text_color=DIM).pack(pady=(8, 2))
+            ctk.CTkLabel(b2, text=f"{stats.get('total_loc', 0):,}", font=(FONT_HEAD, 16, "bold"), text_color=GREEN).pack(pady=(0, 8))
+            
+            b3 = ctk.CTkFrame(grid_m, fg_color=BG2, corner_radius=10, border_width=1, border_color=BORDER)
+            b3.grid(row=0, column=2, padx=6, pady=4, sticky="nsew")
+            ctk.CTkLabel(b3, text="Code Files", font=(FONT_BODY, 11), text_color=DIM).pack(pady=(8, 2))
+            num_files = sum(stats.get("file_counts", {}).values())
+            ctk.CTkLabel(b3, text=f"{num_files}", font=(FONT_HEAD, 16, "bold"), text_color=INK).pack(pady=(0, 8))
+            
+            counts = stats.get("file_counts", {})
+            if counts:
+                ctk.CTkLabel(stats_card, text="File Breakdown by Extension:", font=(FONT_BODY, 11, "bold"), text_color=DIM).grid(
+                    row=1, column=0, padx=16, pady=(4, 2), sticky="w")
+                
+                breakdown_str = "   ·   ".join(f"{ext}: {cnt}" for ext, cnt in sorted(counts.items(), key=lambda x: -x[1])[:6])
+                ctk.CTkLabel(stats_card, text=breakdown_str, font=("Consolas", 11), text_color=INK2, anchor="w").grid(
+                    row=2, column=0, padx=16, pady=(0, 10), sticky="w")
 
         # ── agy History ───────────────────────────────────────────────────────
         history = get_all_project_history(p["path"], limit=20)
@@ -2442,25 +2576,7 @@ class ActivitiesTab(ctk.CTkFrame):
                      text_color=BLUE, anchor="w").grid(
             row=row, column=0, sticky="w", pady=(14, 4)); return row + 1
 
-    def _inbox_card(self, item):
-        c = card_frame(self._detail)
-        c.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(c, text=item.get("date",""), font=(FONT_BODY, 11),
-                     text_color=DIM, width=90).grid(row=0, column=0, padx=(14,8), pady=10)
-        box = ctk.CTkFrame(c, fg_color="transparent")
-        box.grid(row=0, column=1, sticky="ew", pady=8)
-        box.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(box, text=item.get("subject",""), font=(FONT_BODY, 13, "bold"),
-                     text_color=INK, anchor="w").grid(row=0, column=0, sticky="w")
-        if item.get("snippet"):
-            ctk.CTkLabel(box, text=item["snippet"][:120], font=(FONT_BODY, 11),
-                         text_color=DIM, anchor="w").grid(row=1, column=0, sticky="w")
-        action = item.get("action","")
-        if action:
-            ctk.CTkLabel(c, text=f"→ {action}", font=(FONT_BODY, 11, "bold"),
-                         fg_color=YOLK_SOFT, text_color=YOLK_DK, corner_radius=6).grid(
-                row=0, column=2, padx=(8,14))
-        return c
+
 
     def _history_card(self, entry):
         c = ctk.CTkFrame(self._detail, fg_color=BG2, corner_radius=8)
@@ -2505,8 +2621,8 @@ class ActivitiesTab(ctk.CTkFrame):
     def _edit_project(self, p):
         EditDialog(self.winfo_toplevel(), f"Edit — {p['name']}",
                    [("name", "Name", "entry", None),
-                    ("client", "Client", "entry", None),
-                    ("platform", "Platform", "option", ["upwork", "local", "other"]),
+                    ("technologies", "Technologies (comma sep)", "entry", None),
+                    ("category", "Category", "option", ["work", "personal", "open-source", "other"]),
                     ("notes", "Notes", "text", None)],
                    p, lambda v: (p.update(v), self._save_registry(), self._load_projects()))
 
@@ -2520,8 +2636,8 @@ class ActivitiesTab(ctk.CTkFrame):
         EditDialog(self.winfo_toplevel(), "Add Project",
                    [("name", "Project Name", "entry", None),
                     ("path", "Path (e.g. D:\\MyProject)", "entry", None),
-                    ("platform", "Platform", "option", ["upwork", "local", "other"]),
-                    ("client", "Client", "entry", None)],
+                    ("category", "Category", "option", ["work", "personal", "open-source", "other"]),
+                    ("technologies", "Technologies (comma sep)", "entry", None)],
                    {}, lambda v: self._create_project(v))
 
     def _create_project(self, v):
@@ -2533,8 +2649,8 @@ class ActivitiesTab(ctk.CTkFrame):
         reg = load_registry()
         reg.setdefault("projects", []).insert(0, {
             "slug": slug, "name": name, "path": path,
-            "status": "active", "platform": v.get("platform","upwork"),
-            "client": v.get("client",""), "notes": "",
+            "status": "active", "category": v.get("category","work"),
+            "technologies": v.get("technologies",""), "notes": "",
             "next_actions": [], "last_agy_date": "", "agy_msg_count": 0,
             "recent_prompts": [], "created_at": datetime.now().strftime("%Y-%m-%d"),
         })
@@ -3731,7 +3847,6 @@ class DashboardApp(ctk.CTk):
         self.after(200, lambda: self.attributes("-topmost", False))
         
         if HAS_INTEL:
-            threading.Thread(target=start_background_poller, daemon=True).start()
             threading.Thread(target=write_context, daemon=True).start()
 
     def _build_ui(self):

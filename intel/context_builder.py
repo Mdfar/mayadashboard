@@ -1,11 +1,13 @@
 """Builds CONTEXT.md — the file agy reads to understand your current workspace."""
-import json
+import json, sys
 from datetime import datetime
 from pathlib import Path
 
+# Add project root to sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from intel.project_scanner import load_registry
 from intel.agy_parser import get_project_agy_history
-from intel.gmail_poller import load_inbox
 
 CONTEXT_FILE = Path(__file__).resolve().parents[1] / "agy_workspace" / "CONTEXT.md"
 
@@ -14,8 +16,6 @@ def build_context() -> str:
     reg = load_registry()
     projects = reg.get("projects", [])
     active = [p for p in projects if p.get("status") == "active"]
-    inbox  = load_inbox(days=7)
-    unread_inbox = [i for i in inbox if i.get("platform") == "upwork"]
 
     lines = [
         f"# MAYA Context — {now.strftime('%A, %B %d, %Y %H:%M')}",
@@ -32,9 +32,9 @@ def build_context() -> str:
     for p in sorted(active, key=lambda x: x.get("last_agy_date", ""), reverse=True)[:10]:
         lines.append(f"### {p['name']}")
         lines.append(f"- **Path:** `{p['path']}`")
-        lines.append(f"- **Platform:** {p.get('platform', 'local')}")
-        if p.get("client"):
-            lines.append(f"- **Client:** {p['client']}")
+        lines.append(f"- **Category:** {p.get('category', 'local')}")
+        if p.get("technologies"):
+            lines.append(f"- **Technologies:** {p['technologies']}")
         lines.append(f"- **Last agy session:** {p.get('last_agy_date', 'unknown')} ({p.get('agy_msg_count', 0)} total messages)")
         if p.get("notes"):
             lines.append(f"- **Notes:** {p['notes']}")
@@ -49,21 +49,6 @@ def build_context() -> str:
             for r in recent:
                 lines.append(f"  - `{r['date']}` — {r['text'][:100]}")
         lines.append("")
-
-    if unread_inbox:
-        lines += [
-            "---",
-            "",
-            f"## Upwork Inbox ({len(unread_inbox)} messages)",
-            "",
-        ]
-        for item in unread_inbox[:10]:
-            lines.append(f"- **{item['date']}** | {item['subject']}")
-            lines.append(f"  From: {item['from']}")
-            lines.append(f"  Action needed: **{item['action']}**")
-            if item.get("snippet"):
-                lines.append(f"  > {item['snippet'][:150]}")
-            lines.append("")
 
     lines += [
         "---",
