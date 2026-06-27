@@ -544,15 +544,38 @@ strong{{color:{YOLK_DK};}} em{{color:{BLUE};}}
 
 # ── agy fallback launcher (external) ──────────────────────────────────────────
 
-def clean_env():
+def clean_env() -> dict:
+    """Return a clean OS environment for spawning child processes from a
+    PyInstaller-frozen executable.  PyInstaller injects several variables
+    that corrupt any child Python or Go process:
+
+      PYTHONPATH / PYTHONHOME  → point to the _MEIPASS temp bundle
+      PATH                     → prepended with the _MEIPASS directory
+      TCL_LIBRARY / TK_LIBRARY → point to bundled Tk inside _MEIPASS
+
+    We remove / restore all of them so agy.EXE sees a stock system env.
+    """
     env = os.environ.copy()
-    if getattr(sys, 'frozen', False):
-        for var in ['PYTHONPATH', 'PYTHONHOME']:
-            orig = f"{var}_original"
-            if orig in env:
-                env[var] = env[orig]
-            else:
-                env.pop(var, None)
+    if not getattr(sys, 'frozen', False):
+        return env  # running from source, nothing to clean
+
+    meipass = getattr(sys, '_MEIPASS', None)
+
+    # --- Restore or remove PyInstaller-injected Python variables ---
+    for var in ('PYTHONPATH', 'PYTHONHOME', 'TCL_LIBRARY', 'TK_LIBRARY'):
+        orig_key = f"{var}_original"
+        if orig_key in env:
+            env[var] = env[orig_key]   # restore what was there before freeze
+        else:
+            env.pop(var, None)         # it didn't exist before freeze → remove it
+
+    # --- Clean _MEIPASS entries that PyInstaller prepended to PATH ---
+    if meipass:
+        path_parts = env.get('PATH', '').split(os.pathsep)
+        clean_parts = [p for p in path_parts
+                       if not p.startswith(meipass) and p != meipass]
+        env['PATH'] = os.pathsep.join(clean_parts)
+
     return env
 
 def _launch_console(exe: str, cwd: str = None):
