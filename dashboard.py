@@ -530,15 +530,27 @@ strong{{color:{YOLK_DK};}} em{{color:{BLUE};}}
 
 # ── agy fallback launcher (external) ──────────────────────────────────────────
 
+def clean_env():
+    env = os.environ.copy()
+    if getattr(sys, 'frozen', False):
+        for var in ['PYTHONPATH', 'PYTHONHOME']:
+            orig = f"{var}_original"
+            if orig in env:
+                env[var] = env[orig]
+            else:
+                env.pop(var, None)
+    return env
+
 def _launch_console(exe: str, cwd: str = None):
     """Launch exe in a new console. Prefers Windows Terminal (proper VT/ANSI
     redraw for spinners) over legacy conhost, which garbles carriage-return
     animations like agy's loading spinner."""
+    env = clean_env()
     wt = shutil.which("wt")
     if wt:
-        subprocess.Popen([wt, "-d", cwd or os.getcwd(), exe], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        subprocess.Popen([wt, "-d", cwd or os.getcwd(), exe], env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
     else:
-        subprocess.Popen(["cmd.exe", "/k", f'"{exe}"'], cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        subprocess.Popen(["cmd.exe", "/k", f'"{exe}"'], env=env, cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
 
 def launch_agy(prompt_hint: str = ""):
     agy = agy_exe()
@@ -2801,7 +2813,7 @@ class TerminalTab(ctk.CTkFrame):
                 is_fallback = True
 
         try:
-            self._pty = winpty.PtyProcess.spawn(args, cwd=cwd, dimensions=(40, 220))
+            self._pty = winpty.PtyProcess.spawn(args, cwd=cwd, env=clean_env(), dimensions=(40, 220))
             self._running = True
             status_text = "● Shell Connected" if is_fallback else "● agy Connected"
             self._status.configure(text=status_text, text_color=GREEN)
