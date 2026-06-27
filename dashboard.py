@@ -755,6 +755,50 @@ class EditDialog(ctk.CTkToplevel):
         self._on_ok(out)
 
 
+class GeneratingPopup(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Generating")
+        self.configure(fg_color=BG)
+        self.geometry("380x180")
+        self.resizable(False, False)
+        self.transient(master)
+        
+        # Center the window relative to master
+        self.update_idletasks()
+        if master:
+            x = master.winfo_rootx() + (master.winfo_width() - 380) // 2
+            y = master.winfo_rooty() + (master.winfo_height() - 180) // 2
+            self.geometry(f"380x180+{max(0, x)}+{max(0, y)}")
+        
+        self.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(self, text="Generating with agy...", font=(FONT_HEAD, 16, "bold"),
+                     text_color=INK).grid(row=0, column=0, pady=(20, 4))
+        
+        # Progress bar (loading effect)
+        self._progress = ctk.CTkProgressBar(self, height=8, corner_radius=4,
+                                            fg_color=BG2, progress_color=BLUE)
+        self._progress.grid(row=1, column=0, sticky="ew", padx=30, pady=8)
+        self._progress.configure(mode="indeterminate")
+        self._progress.start()
+        
+        ctk.CTkLabel(self, text="This might take a minute, please wait...",
+                     font=(FONT_BODY, 11), text_color=DIM).grid(row=2, column=0, pady=(0, 10))
+        
+        # Cancel button to close manually
+        pill_button(self, "Cancel", self.destroy, "ghost", "x", "ink", width=90).grid(row=3, column=0, pady=(4, 16))
+        
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.after(60, self._grab)
+
+    def _grab(self):
+        try:
+            self.grab_set(); self.lift(); self.focus_force()
+        except Exception:
+            pass
+
+
 def move_in_list(lst, item, delta):
     """Move item within lst by delta (-1 up / +1 down). Returns True if moved."""
     try:
@@ -884,8 +928,7 @@ class TopPicksTab(ctk.CTkFrame):
         instr = SETTINGS.get("top_picks_instruction", "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
-            self._btn_ask.configure(text="  Generating...", state="disabled")
-            self._btn_ask.update()
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(build_prompt(instr, "top_picks", ds))
         else:
             launch_agy()
@@ -916,8 +959,12 @@ class TopPicksTab(ctk.CTkFrame):
         self.after(self.POLL_MS, self._poll)
 
     def rerender(self):
-        if hasattr(self, "_btn_ask"):
-            self._btn_ask.configure(text="  Refresh with agy", state="normal")
+        if hasattr(self, "_loading_popup") and self._loading_popup:
+            try:
+                self._loading_popup.destroy()
+            except Exception:
+                pass
+            self._loading_popup = None
             
         if self._html:
             self._html.load_html(md_to_html(self._raw) if self._raw.strip() else self._empty_html())
@@ -1853,9 +1900,7 @@ class JsonTab(ctk.CTkFrame):
         instr = SETTINGS.get(self._instruction_key(), "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
-            if hasattr(self, "_btn_ask"):
-                self._btn_ask.configure(text="  Generating...", state="disabled")
-                self._btn_ask.update()
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(build_prompt(instr, self.KIND, ds))
         else:
             launch_agy()
@@ -2042,6 +2087,12 @@ class PlanTab(JsonTab):
         if APP: APP.toast(f"→ Activities: {task['title'][:50]}", "ok")
 
     def render(self):
+        if hasattr(self, "_loading_popup") and self._loading_popup:
+            try:
+                self._loading_popup.destroy()
+            except Exception:
+                pass
+            self._loading_popup = None
         if hasattr(self, "_btn_ask"):
             self._btn_ask.configure(text="  Generate with agy", state="normal")
         names = [s.get("name", "?") for s in self._sections()] or ["Morning"]
@@ -2564,8 +2615,7 @@ class LessonsTab(ctk.CTkFrame):
         instr = SETTINGS.get("lessons_instruction", "")
         ds = APP.current_date if APP else today_str()
         if self._ask_agy_fn:
-            self._btn_ask.configure(text="  Generating...", state="disabled")
-            self._btn_ask.update()
+            self._loading_popup = GeneratingPopup(self.winfo_toplevel())
             self._ask_agy_fn(build_prompt(instr, "lessons", ds))
         else:
             launch_agy()
@@ -2647,6 +2697,12 @@ class LessonsTab(ctk.CTkFrame):
 
     # ── render ──
     def render(self):
+        if hasattr(self, "_loading_popup") and self._loading_popup:
+            try:
+                self._loading_popup.destroy()
+            except Exception:
+                pass
+            self._loading_popup = None
         if hasattr(self, "_btn_ask"):
             self._btn_ask.configure(text="  Generate with agy", state="normal")
         for w in self._sidebar.winfo_children():
