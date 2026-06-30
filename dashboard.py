@@ -159,10 +159,15 @@ ACT_SCHEMA = (
     '"recommendations":["tip 1","tip 2","tip 3"]}'
 )
 LES_SCHEMA = (
-    '{"date":"'+TODAY+'","lessons":[{"id":"l1","title":"Lesson title",'
-    '"what":"3-5 sentence explanation of the concept","'
-    'example":"a concrete code snippet or worked example","'
-    'action":"one concrete actionable takeaway","learned":false}]}'
+    '{"date":"'+TODAY+'","topic":"The specific topic of this lesson series (e.g. Agentic AI)","lessons":[{"id":"l1","title":"Lesson title",'
+    '"what":"Detailed explanation of the concept (2-3 paragraphs with key subtopics)",'
+    '"example":"A concrete code snippet or worked example ready to be executed",'
+    '"action":"One concrete actionable takeaway",'
+    '"exercise_question":"A fill-in-the-blank coding question (e.g. Complete the print statement to output Hello: print(____))",'
+    '"exercise_code":"The code template with ____ as the blank space (e.g. print(____))",'
+    '"exercise_answer":"The correct value that fills the blank (e.g. \\"Hello\\")",'
+    '"exercise_hint":"A helpful hint for the exercise",'
+    '"learned":false}]}'
 )
 TOP_PICKS_SCHEMA = (
     "For each entry, generate a beautiful HTML card using the classes: "
@@ -246,7 +251,7 @@ DEFAULT_SETTINGS = {
     "top_picks_instruction": "Research the 5 most important AI and tech developments for today.",
     "plan_instruction": "Create a daily plan for a software engineer/AI developer for today.",
     "activities_instruction": "Read the target file if it exists, preserve its tasks, then update it. Add 3 useful recommendations based on the tasks.",
-    "lessons_instruction": "Write exactly 10 in-depth lessons (like a tutorial chapter, e.g. w3schools style) for a software engineer working on AI today. Each lesson needs a clear explanation (what), a concrete worked example (example), and one actionable takeaway (action).",
+    "lessons_instruction": "Write exactly 10 lessons for a software engineer working on AI today.",
     "wp_url": "https://yourblog.com",
     "wp_username": "admin",
     "wp_app_password": "",
@@ -256,6 +261,23 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS: dict = {}
+
+def get_topic_info(instruction: str) -> tuple:
+    topic_name = "AI Development"
+    match = re.search(r"lessons\s+(?:on|about|for)\s+([^.,\n]*)", instruction, re.IGNORECASE)
+    if match:
+        topic_name = match.group(1).strip()
+    else:
+        cleaned = re.sub(r"Write\s+(?:exactly\s+)?\d+\s+lessons\s*", "", instruction, flags=re.IGNORECASE).strip()
+        if cleaned:
+            topic_name = cleaned
+    topic_name = topic_name.strip().title()
+    if len(topic_name) > 40:
+        topic_name = topic_name[:37] + "..."
+    slug = re.sub(r"[^a-z0-9]+", "_", topic_name.lower()).strip("_")
+    if not slug:
+        slug = "general"
+    return topic_name, slug
 
 def clean_instruction(text: str) -> str:
     if not text:
@@ -301,7 +323,23 @@ def load_settings() -> dict:
     data = dict(DEFAULT_SETTINGS)
     if SETTINGS_FILE.exists():
         try:
-            data.update(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
+            loaded = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if "lessons_instruction" in loaded:
+                instr = loaded["lessons_instruction"]
+                if "Each lesson needs" in instr or "exercise_question" in instr or "tutorial chapter" in instr:
+                    clean_instr = re.split(r"\s+Each lesson needs", instr, flags=re.IGNORECASE)[0]
+                    clean_instr = re.sub(
+                        r"in-depth lessons \(like a tutorial chapter, e.g. w3schools style\)",
+                        "lessons",
+                        clean_instr,
+                        flags=re.IGNORECASE
+                    )
+                    loaded["lessons_instruction"] = clean_instr.strip()
+                    try:
+                        SETTINGS_FILE.write_text(json.dumps(loaded, indent=2, ensure_ascii=False), encoding="utf-8")
+                    except Exception:
+                        pass
+            data.update(loaded)
         except Exception:
             pass
     for k in ["top_picks_instruction", "plan_instruction", "activities_instruction", "lessons_instruction"]:
@@ -339,16 +377,59 @@ def agy_model() -> str:
 
 def build_prompt(instruction: str, kind: str, ds: str) -> tuple:
     """Attach the concrete, date-correct target file path and schema to a user instruction."""
-    target = path_for(kind, ds)
+    if kind == "lessons":
+        target = CONTENT_DIR / "lessons" / "incoming_lessons.json"
+        
+        # Load all existing topics and lessons
+        lessons_dir = CONTENT_DIR / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        existing_topics_str = ""
+        
+        for p in sorted(lessons_dir.glob("*.json")):
+            if p.name == "incoming_lessons.json":
+                continue
+            data = load_json(p, {})
+            ok, fixed, _ = validate_and_fix("lessons", data)
+            if ok and fixed.get("lessons"):
+                topic = fixed.get("topic") or p.stem.replace("_", " ").title()
+                titles = [f"  - {l.get('title')}" for l in fixed["lessons"]]
+                existing_topics_str += f"- Topic: \"{topic}\"\n  Lessons:\n" + "\n".join(titles) + "\n\n"
+        
+        if existing_topics_str:
+            context = (
+                f"\n\nHere are the existing learning topics in your workspace:\n{existing_topics_str}"
+                "If your new lessons continue or build upon one of these existing topics, write the EXACT same topic name in the \"topic\" field of the JSON. "
+                "The lessons you output should continue the sequence, building upon the last lessons without duplicating titles or content.\n"
+                "If this is a new topic, write a new, concise, and professional title (2-5 words) in the \"topic\" field (do not use the full instruction sentence as the topic name; make it a clean header like \"Neural Networks & Backpropagation\")."
+            )
+        else:
+            context = (
+                "\n\nWrite a concise, professional title (2-5 words) in the \"topic\" field (do not use the full instruction sentence as the topic name; make it a clean header like \"Neural Networks & Backpropagation\")."
+            )
+    else:
+        target = path_for(kind, ds)
+        context = ""
+        
     clean_instr = clean_instruction(instruction)
+    clean_instr_with_context = clean_instr + context
     schema_map = {
         "top_picks": f"Write raw HTML directly to the target file. Do not wrap in markdown backticks. Overwrite the file completely. Do not explain, just write the file.\n{TOP_PICKS_SCHEMA}",
         "plan": f"Write JSON using EXACTLY this schema: {PLAN_SCHEMA} . Sections: Morning, Afternoon, Evening. priority is one of high|medium|low. id must be unique. Output ONLY valid JSON to the target file. Do not explain.",
         "activities": f"Write JSON using EXACTLY this schema: {ACT_SCHEMA} . status is one of active|pending|done|blocked. Add 3 useful recommendations based on the tasks. Output ONLY valid JSON to the target file. Do not explain.",
-        "lessons": f"Write JSON using EXACTLY this schema: {LES_SCHEMA} . learned is always false initially. id unique. Output ONLY valid JSON to the target file. Do not explain."
+        "lessons": (
+            "Write in-depth lessons like a tutorial chapter (W3Schools style). "
+            "Each lesson needs a detailed explanation (what) containing paragraphs and bullet points, "
+            "a concrete worked example (example) with code snippet, a key takeaway (action), "
+            "and a w3schools-style coding exercise. The exercise needs: "
+            "a question description (exercise_question), a code template with a '____' blank space (exercise_code), "
+            "the exact string to fill the blank (exercise_answer), and a hint (exercise_hint). "
+            f"Write JSON using EXACTLY this schema: {LES_SCHEMA} . "
+            "learned is always false initially. id unique. "
+            "Output ONLY valid JSON to the target file. Do not explain."
+        )
     }
     system_instr = schema_map.get(kind, "")
-    full_prompt = f"{clean_instr} {system_instr}\n\nTARGET FILE (write here, overwrite it): {target}"
+    full_prompt = f"{clean_instr_with_context} {system_instr}\n\nTARGET FILE (write here, overwrite it): {target}"
     return full_prompt, clean_instr
 
 # Set by DashboardApp at startup; gives tabs access to current_date + toast().
@@ -414,19 +495,112 @@ def validate_and_fix(kind: str, data):
                 data["recommendations"] = []
             return True, data, ""
         if kind == "lessons":
+            if isinstance(data, list):
+                data = {"lessons": data}
             if not isinstance(data, dict) or not isinstance(data.get("lessons"), list):
                 return False, None, "lessons.json: missing 'lessons' list"
+            data.setdefault("topic", "General")
+            data.setdefault("date", TODAY)
             for l in data["lessons"]:
                 l.setdefault("id", new_id())
                 l.setdefault("title", "")
+                if "lesson" in l and not l.get("what"):
+                    l["what"] = l["lesson"]
                 l.setdefault("what", "")
                 l.setdefault("example", "")
                 l.setdefault("action", "")
+                l.setdefault("exercise_question", "")
+                l.setdefault("exercise_code", "")
+                l.setdefault("exercise_answer", "")
+                l.setdefault("exercise_hint", "")
+                l.setdefault("date", data["date"])
                 l["learned"] = bool(l.get("learned", False))
             return True, data, ""
     except Exception as e:
         return False, None, f"{kind}: {e}"
     return True, data, ""
+
+def merge_incoming_lessons(incoming_path: Path):
+    """Load incoming lessons and merge them into the master topic file."""
+    try:
+        if not incoming_path.exists():
+            return
+        data = load_json(incoming_path, {})
+        ok, fixed, _ = validate_and_fix("lessons", data)
+        if not ok or not fixed.get("lessons"):
+            return
+        
+        topic = fixed.get("topic") or "General"
+        slug = re.sub(r"[^a-z0-9]+", "_", topic.lower()).strip("_")
+        if not slug:
+            slug = "general"
+            
+        lessons_dir = CONTENT_DIR / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        master_path = lessons_dir / f"{slug}.json"
+        
+        if master_path.exists():
+            master_data = load_json(master_path, {})
+            _, master_fixed, _ = validate_and_fix("lessons", master_data)
+            
+            existing_ids = {l["id"] for l in master_fixed.get("lessons", [])}
+            existing_titles = {l["title"].lower().strip() for l in master_fixed.get("lessons", [])}
+            
+            new_lessons = []
+            for l in fixed.get("lessons", []):
+                while l["id"] in existing_ids:
+                    l["id"] = new_id()
+                
+                title_clean = l["title"].lower().strip()
+                if title_clean not in existing_titles:
+                    new_lessons.append(l)
+                    existing_ids.add(l["id"])
+                    existing_titles.add(title_clean)
+            
+            master_fixed["lessons"].extend(new_lessons)
+            master_fixed["topic"] = topic
+            save_json(master_path, master_fixed)
+        else:
+            save_json(master_path, fixed)
+            
+        incoming_path.unlink()
+    except Exception as e:
+        if APP:
+            APP.toast(f"Merge error: {e}", "error")
+
+def migrate_legacy_lessons():
+    """Find all lessons files in content/<date>/ and merge them into the master lessons directory."""
+    try:
+        lessons_dir = CONTENT_DIR / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        
+        for d in sorted(list_history_dates()):
+            dir_path = CONTENT_DIR / d
+            p = dir_path / "lessons.json"
+            if p.exists():
+                data = load_json(p, {})
+                ok, fixed, _ = validate_and_fix("lessons", data)
+                if ok and fixed.get("lessons"):
+                    temp_p = lessons_dir / f"legacy_{d}_lessons.json"
+                    save_json(temp_p, fixed)
+                    merge_incoming_lessons(temp_p)
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            for p in list(dir_path.glob("lessons_*.json")):
+                data = load_json(p, {})
+                ok, fixed, _ = validate_and_fix("lessons", data)
+                if ok and fixed.get("lessons"):
+                    temp_p = lessons_dir / f"legacy_{d}_{p.name}"
+                    save_json(temp_p, fixed)
+                    merge_incoming_lessons(temp_p)
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"Migration error: {e}")
 
 # ── Backups ────────────────────────────────────────────────────────────────────
 
@@ -659,16 +833,32 @@ def export_content(ds: str) -> Path:
             note = f" — {t['note']}" if t.get("note") else ""
             lines.append(f"- [{t.get('status','active')}] {t.get('title','')}{note}\n")
         lines.append("\n")
-    les = load_json(path_for("lessons", ds), {})
-    if les.get("lessons"):
+    # Load all lessons for date 'ds'
+    compiled_lessons = {}
+    lessons_dir = CONTENT_DIR / "lessons"
+    if lessons_dir.exists():
+        for p in lessons_dir.glob("*.json"):
+            if p.name == "incoming_lessons.json":
+                continue
+            data = load_json(p, {})
+            ok, fixed, _ = validate_and_fix("lessons", data)
+            if ok and fixed.get("lessons"):
+                topic = fixed.get("topic") or "General"
+                for l in fixed["lessons"]:
+                    if l.get("date") == ds:
+                        compiled_lessons.setdefault(topic, []).append(l)
+                        
+    if compiled_lessons:
         lines.append("---\n\n# Lessons\n\n")
-        for i, l in enumerate(les["lessons"], 1):
-            mark = "✓" if l.get("learned") else "○"
-            lines.append(f"### {i}. {mark} {l.get('title','')}\n\n")
-            if l.get("what"):
-                lines.append(f"{l['what']}\n\n")
-            if l.get("action"):
-                lines.append(f"> **Action:** {l['action']}\n\n")
+        for topic, lessons in compiled_lessons.items():
+            lines.append(f"## Topic: {topic}\n\n")
+            for i, l in enumerate(lessons, 1):
+                mark = "✓" if l.get("learned") else "○"
+                lines.append(f"### {i}. {mark} {l.get('title','')}\n\n")
+                if l.get("what"):
+                    lines.append(f"{l['what']}\n\n")
+                if l.get("action"):
+                    lines.append(f"> **Action:** {l['action']}\n\n")
     out = date_dir(ds) / "MAYA_export.md"
     out.write_text("".join(lines), encoding="utf-8")
     return out
@@ -2688,6 +2878,125 @@ class ActivitiesTab(ctk.CTkFrame):
 
 # ── Lessons Tab ────────────────────────────────────────────────────────────────
 
+class TryItYourselfDialog(ctk.CTkToplevel):
+    """Playground to edit and execute Python code snippet, w3schools-style."""
+    def __init__(self, master, title, code_snippet):
+        super().__init__(master)
+        self.title("Try It Yourself")
+        self.configure(fg_color=BG)
+        self.geometry("900x600")
+        self.transient(master)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Header bar
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(15, 10))
+        
+        lbl_title = ctk.CTkLabel(hdr, text=title, font=(FONT_HEAD, 16, "bold"), text_color=INK)
+        lbl_title.pack(side="left")
+        
+        self._btn_run = ctk.CTkButton(
+            hdr, text="Run ❯", font=(FONT_BODY, 13, "bold"),
+            fg_color=GREEN, hover_color=GREEN_DK, text_color="#FFFFFF",
+            width=100, height=32, corner_radius=6, command=self._run_code
+        )
+        self._btn_run.pack(side="right", padx=5)
+        
+        # Editor pane (Left)
+        f_edit = ctk.CTkFrame(self, fg_color=CARD, border_width=1, border_color=BORDER, corner_radius=8)
+        f_edit.grid(row=1, column=0, sticky="nsew", padx=(20, 10), pady=(0, 20))
+        f_edit.grid_columnconfigure(0, weight=1)
+        f_edit.grid_rowconfigure(1, weight=1)
+        
+        lbl_edit = ctk.CTkLabel(f_edit, text="Source Code:", font=(FONT_BODY, 12, "bold"), text_color=INK2)
+        lbl_edit.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 4))
+        
+        self._editor = ctk.CTkTextbox(
+            f_edit, font=("Cascadia Mono", 12), fg_color="#1E1E1E" if _THEME_NAME == "dark" else "#FAFAFA",
+            text_color="#D4D4D4" if _THEME_NAME == "dark" else "#1E1E1E", insert_color=BLUE,
+            corner_radius=6, border_width=0
+        )
+        self._editor.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self._editor.insert("1.0", code_snippet.strip())
+        
+        # Output console pane (Right)
+        f_out = ctk.CTkFrame(self, fg_color=CARD2, border_width=1, border_color=BORDER, corner_radius=8)
+        f_out.grid(row=1, column=1, sticky="nsew", padx=(10, 20), pady=(0, 20))
+        f_out.grid_columnconfigure(0, weight=1)
+        f_out.grid_rowconfigure(1, weight=1)
+        
+        lbl_out = ctk.CTkLabel(f_out, text="Result:", font=(FONT_BODY, 12, "bold"), text_color=INK2)
+        lbl_out.grid(row=0, column=0, sticky="w", padx=12, pady=(8, 4))
+        
+        self._console = ctk.CTkTextbox(
+            f_out, font=("Cascadia Mono", 12), fg_color="#0F172A",
+            text_color="#38BDF8", corner_radius=6, border_width=0
+        )
+        self._console.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self._console.configure(state="disabled")
+        
+        self.after(100, self._grab)
+
+    def _grab(self):
+        try:
+            self.grab_set()
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+
+    def _run_code(self):
+        code = self._editor.get("1.0", "end")
+        self._console.configure(state="normal")
+        self._console.delete("1.0", "end")
+        self._console.insert("end", "Running...\n")
+        self._console.configure(state="disabled")
+        
+        def run_proc():
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as f:
+                f.write(code)
+                temp_path = f.name
+            
+            try:
+                res = subprocess.run(
+                    [sys.executable, temp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                output = res.stdout
+                errors = res.stderr
+            except subprocess.TimeoutExpired:
+                output = ""
+                errors = "Error: Timeout. Code took longer than 5 seconds to run."
+            except Exception as e:
+                output = ""
+                errors = f"Execution failed: {e}"
+            finally:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+            
+            def update_ui():
+                self._console.configure(state="normal")
+                self._console.delete("1.0", "end")
+                if output:
+                    self._console.insert("end", output)
+                if errors:
+                    self._console.insert("end", "\n--- Errors ---\n" + errors)
+                if not output and not errors:
+                    self._console.insert("end", "[No output produced]")
+                self._console.configure(state="disabled")
+            
+            self.after(0, update_ui)
+            
+        threading.Thread(target=run_proc, daemon=True).start()
+
+
 class LessonsTab(ctk.CTkFrame):
     """W3Schools-style course view: sidebar of chapters aggregated across
     every content/<date>/lessons.json, reading pane for the selected one."""
@@ -2758,9 +3067,16 @@ class LessonsTab(ctk.CTkFrame):
     def _edit_instr(self):
         open_instr_editor(self.winfo_toplevel(), "lessons_instruction", "Lessons")
 
-    @property
-    def _current_path(self) -> Path:
-        return path_for("lessons", APP.current_date if APP else today_str())
+    def _current_mtime(self) -> float:
+        try:
+            lessons_dir = CONTENT_DIR / "lessons"
+            mtimes = [lessons_dir.stat().st_mtime]
+            for p in lessons_dir.glob("*.json"):
+                if p.name != "incoming_lessons.json":
+                    mtimes.append(p.stat().st_mtime)
+            return max(mtimes)
+        except Exception:
+            return -1.0
 
     def on_date_change(self):
         self._load_all()
@@ -2768,42 +3084,61 @@ class LessonsTab(ctk.CTkFrame):
     # ── data ──
     def _load_all(self):
         self._chapters = []
-        for d in sorted(list_history_dates(), reverse=True):
-            data = load_json(path_for("lessons", d), {})
+        lessons_dir = CONTENT_DIR / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load legacy and incoming lessons first
+        incoming_path = lessons_dir / "incoming_lessons.json"
+        if incoming_path.exists() and incoming_path.stat().st_size > 10:
+            merge_incoming_lessons(incoming_path)
+            
+        files = sorted(list(lessons_dir.glob("*.json")), key=lambda x: x.stat().st_mtime, reverse=True)
+        for p in files:
+            if p.name == "incoming_lessons.json":
+                continue
+            data = load_json(p, {})
             if not data:
                 continue
             ok, fixed, _ = validate_and_fix("lessons", data)
             if not ok:
                 continue
-            for les in fixed.get("lessons", []):
-                self._chapters.append({"date": d, "lesson": les})
+            topic_title = fixed.get("topic") or p.stem.replace("_", " ").title()
+            file_date = fixed.get("date") or datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d")
+            
+            for idx_in_topic, les in enumerate(fixed.get("lessons", []), 1):
+                self._chapters.append({
+                    "date": les.get("date") or file_date,
+                    "topic": topic_title,
+                    "file_path": str(p),
+                    "lesson": les,
+                    "chapter_num": idx_in_topic
+                })
         if self._selected >= len(self._chapters):
             self._selected = max(0, len(self._chapters) - 1)
-        try:
-            p = self._current_path
-            self._last_mtime = p.stat().st_mtime if p.exists() else -1.0
-        except Exception:
-            self._last_mtime = -1.0
+        self._last_mtime = self._current_mtime()
         self.render()
 
     def _poll(self):
         try:
-            p = self._current_path
-            m = p.stat().st_mtime if p.exists() else -1.0
-            if m != self._last_mtime:
+            incoming_path = CONTENT_DIR / "lessons" / "incoming_lessons.json"
+            if incoming_path.exists() and incoming_path.stat().st_size > 10:
+                merge_incoming_lessons(incoming_path)
                 self._load_all()
+            else:
+                m = self._current_mtime()
+                if m != self._last_mtime:
+                    self._load_all()
         except Exception:
             pass
         self.after(self.POLL_MS, self._poll)
 
     def _save_chapter(self, ch):
-        """Persist an edit/learned-toggle for one chapter back to its own date's file."""
-        d = ch["date"]
-        p = path_for("lessons", d)
-        data = load_json(p, {"date": d, "lessons": []})
+        """Persist an edit/learned-toggle for one chapter back to its own source file."""
+        p = Path(ch["file_path"])
+        data = load_json(p, {"lessons": []})
         ok, fixed, _ = validate_and_fix("lessons", data)
         if not ok:
-            fixed = {"date": d, "lessons": []}
+            fixed = {"lessons": []}
         lid = ch["lesson"]["id"]
         for l in fixed.get("lessons", []):
             if l["id"] == lid:
@@ -2823,7 +3158,11 @@ class LessonsTab(ctk.CTkFrame):
                    [("title", "Title", "entry", None),
                     ("what", "What", "text", None),
                     ("example", "Example", "text", None),
-                    ("action", "Action", "text", None)],
+                    ("action", "Action", "text", None),
+                    ("exercise_question", "Exercise Question", "text", None),
+                    ("exercise_code", "Exercise Code (with ____)", "text", None),
+                    ("exercise_answer", "Exercise Answer", "entry", None),
+                    ("exercise_hint", "Exercise Hint", "entry", None)],
                    les, lambda v: (les.update(v), self._save_chapter(ch)))
 
     def _select(self, idx):
@@ -2860,12 +3199,14 @@ class LessonsTab(ctk.CTkFrame):
                          font=(FONT_BODY, 14, "italic"), text_color=DIM).grid(row=0, column=0, pady=40)
             return
 
-        row, last_date = 0, None
+        row, last_group = 0, None
         for i, ch in enumerate(self._chapters):
-            if ch["date"] != last_date:
-                last_date = ch["date"]
-                ctk.CTkLabel(self._sidebar, text=pretty_date(last_date), font=(FONT_BODY, 11, "bold"),
-                             text_color=DIM, anchor="w").grid(
+            group_key = (ch["date"], ch["topic"])
+            if group_key != last_group:
+                last_group = group_key
+                header_text = f"{ch['topic']} ({pretty_date(ch['date'])})"
+                ctk.CTkLabel(self._sidebar, text=header_text, font=(FONT_BODY, 11, "bold"),
+                             text_color=DIM, anchor="w", wraplength=230, justify="left").grid(
                     row=row, column=0, sticky="ew", padx=10, pady=(14 if row else 8, 4))
                 row += 1
             self._chapter_row(i, ch).grid(row=row, column=0, sticky="ew", padx=6, pady=2)
@@ -2879,7 +3220,7 @@ class LessonsTab(ctk.CTkFrame):
         f = ctk.CTkFrame(self._sidebar, fg_color=BLUE_SOFT if active else "transparent",
                          corner_radius=8, cursor="hand2")
         f.grid_columnconfigure(1, weight=1)
-        badge = ctk.CTkLabel(f, text="✓" if learned else str(idx + 1), font=(FONT_BODY, 11, "bold"),
+        badge = ctk.CTkLabel(f, text="✓" if learned else str(ch.get("chapter_num", idx + 1)), font=(FONT_BODY, 11, "bold"),
                              width=22, text_color="#FFFFFF" if learned else (BLUE if active else DIM),
                              fg_color=GREEN if learned else "transparent", corner_radius=10)
         badge.grid(row=0, column=0, padx=(8, 6), pady=8)
@@ -2895,33 +3236,61 @@ class LessonsTab(ctk.CTkFrame):
         les, idx = ch["lesson"], self._selected
         learned = les.get("learned", False)
 
-        ctk.CTkLabel(self._reading, text=f"CHAPTER {idx + 1} · {pretty_date(ch['date'])}",
+        curr_row = 0
+
+        # Chapter + Date header
+        ctk.CTkLabel(self._reading, text=f"CHAPTER {ch.get('chapter_num', idx + 1)} · {ch.get('topic', 'General')} · {pretty_date(ch['date'])}",
                      font=(FONT_BODY, 11, "bold"), text_color=BLUE).grid(
-            row=0, column=0, sticky="w", pady=(0, 4))
+            row=curr_row, column=0, sticky="w", pady=(0, 4))
+        curr_row += 1
+
+        # Title
         ctk.CTkLabel(self._reading, text=les.get("title", ""), anchor="w", justify="left",
                      font=(FONT_HEAD, 24, "bold"), text_color=INK, wraplength=760).grid(
-            row=1, column=0, sticky="w", pady=(2, 14))
+            row=curr_row, column=0, sticky="w", pady=(2, 14))
+        curr_row += 1
 
+        # Explanation
         what = les.get("what", "")
         if what:
             ctk.CTkLabel(self._reading, text=what, anchor="w", justify="left", font=(FONT_BODY, 14),
-                         text_color=INK2, wraplength=760).grid(row=2, column=0, sticky="w", pady=(0, 14))
+                         text_color=INK2, wraplength=760).grid(row=curr_row, column=0, sticky="w", pady=(0, 14))
+            curr_row += 1
 
+        # Example Code Snippet with Try it Yourself Button
         example = les.get("example", "")
         if example:
             ex = ctk.CTkFrame(self._reading, fg_color="#102036", corner_radius=10,
                               border_width=1, border_color="#1C2E47")
-            ex.grid(row=3, column=0, sticky="ew", pady=(0, 14))
-            ctk.CTkLabel(ex, text="EXAMPLE", font=(FONT_BODY, 10, "bold"),
-                         text_color="#7FA8D9").grid(row=0, column=0, sticky="w", padx=16, pady=(12, 0))
+            ex.grid(row=curr_row, column=0, sticky="ew", pady=(0, 14))
+            ex.grid_columnconfigure(0, weight=1)
+            
+            ex_hdr = ctk.CTkFrame(ex, fg_color="transparent")
+            ex_hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 4))
+            ex_hdr.grid_columnconfigure(0, weight=1)
+            
+            ctk.CTkLabel(ex_hdr, text="EXAMPLE / PLAYGROUND", font=(FONT_BODY, 10, "bold"),
+                         text_color="#7FA8D9").grid(row=0, column=0, sticky="w")
+            
+            ctk.CTkButton(
+                ex_hdr, text="Try it Yourself ❯", font=(FONT_BODY, 11, "bold"),
+                fg_color=GREEN, hover_color=GREEN_DK, text_color="#FFFFFF",
+                width=120, height=26, corner_radius=5,
+                command=lambda code=example, title=les.get("title", "Lesson"): TryItYourselfDialog(
+                    self.winfo_toplevel(), title, code
+                )
+            ).grid(row=0, column=1, sticky="e")
+            
             ctk.CTkLabel(ex, text=example, anchor="w", justify="left", font=("Cascadia Mono", 13),
                          text_color="#E8EEF7", wraplength=720).grid(
                 row=1, column=0, sticky="w", padx=16, pady=(4, 14))
+            curr_row += 1
 
+        # Action Takeaway
         action = les.get("action", "")
         if action:
             af = ctk.CTkFrame(self._reading, fg_color=YOLK_SOFT, corner_radius=8)
-            af.grid(row=4, column=0, sticky="ew", pady=(0, 18))
+            af.grid(row=curr_row, column=0, sticky="ew", pady=(0, 18))
             af.grid_columnconfigure(1, weight=1)
             ic = icon("check", "yolk", 15)
             if ic:
@@ -2929,9 +3298,126 @@ class LessonsTab(ctk.CTkFrame):
             ctk.CTkLabel(af, text=action, anchor="w", justify="left", font=(FONT_BODY, 13, "bold"),
                          text_color=YOLK_DK, wraplength=680).grid(
                 row=0, column=1, padx=(0, 12), pady=10, sticky="w")
+            curr_row += 1
 
+        # Exercise Block
+        ex_q = les.get("exercise_question", "")
+        ex_c = les.get("exercise_code", "")
+        ex_a = les.get("exercise_answer", "")
+        ex_h = les.get("exercise_hint", "")
+        
+        if ex_q:
+            f_exercise = ctk.CTkFrame(
+                self._reading, 
+                fg_color="#1F2A38" if _THEME_NAME == "dark" else "#E8F5E9",
+                border_width=1, 
+                border_color="#2E7D32" if _THEME_NAME == "dark" else "#C8E6C9", 
+                corner_radius=10
+            )
+            f_exercise.grid(row=curr_row, column=0, sticky="ew", pady=(0, 18))
+            f_exercise.grid_columnconfigure(0, weight=1)
+            
+            ctk.CTkLabel(
+                f_exercise, text="Test Yourself With Exercises", 
+                font=(FONT_HEAD, 15, "bold"), 
+                text_color="#81C784" if _THEME_NAME == "dark" else "#2E7D32"
+            ).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 6))
+            
+            ctk.CTkLabel(
+                f_exercise, text=ex_q, 
+                font=(FONT_BODY, 13), 
+                text_color=INK2, wraplength=720, justify="left"
+            ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
+            
+            f_code = ctk.CTkFrame(f_exercise, fg_color="#0F172A", corner_radius=6)
+            f_code.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
+            
+            ctk.CTkLabel(
+                f_code, text=ex_c, 
+                font=("Cascadia Mono", 13), 
+                text_color="#E2E8F0", justify="left"
+            ).grid(row=0, column=0, padx=14, pady=10, sticky="w")
+            
+            f_input = ctk.CTkFrame(f_exercise, fg_color="transparent")
+            f_input.grid(row=3, column=0, sticky="w", padx=16, pady=(0, 12))
+            
+            ctk.CTkLabel(
+                f_input, text="Your Answer: ", 
+                font=(FONT_BODY, 12, "bold"), 
+                text_color=INK
+            ).pack(side="left", padx=(0, 6))
+            
+            ans_var = ctk.StringVar()
+            ans_entry = ctk.CTkEntry(
+                f_input, textvariable=ans_var, width=200, height=30,
+                font=(FONT_BODY, 13), fg_color=CARD, border_color=BORDER,
+                text_color=INK, corner_radius=6
+            )
+            ans_entry.pack(side="left", padx=4)
+            
+            feedback_lbl = ctk.CTkLabel(
+                f_exercise, text="", font=(FONT_BODY, 13, "bold"),
+                anchor="w", justify="left"
+            )
+            feedback_lbl.grid(row=4, column=0, sticky="w", padx=16, pady=(0, 8))
+            feedback_lbl.grid_remove()
+            
+            def check_answer():
+                user_ans = ans_var.get().strip()
+                correct_ans = ex_a.strip()
+                if user_ans.lower() == correct_ans.lower():
+                    feedback_lbl.configure(
+                        text="Correct! 🎉 Nice job.", 
+                        text_color="#81C784" if _THEME_NAME == "dark" else "#2E7D32"
+                    )
+                    feedback_lbl.grid()
+                    if not ch["lesson"].get("learned"):
+                        self._toggle(ch)
+                    if APP:
+                        APP.toast("Exercise correct!", "ok")
+                else:
+                    feedback_lbl.configure(
+                        text="Incorrect. Try again!", 
+                        text_color=RED
+                    )
+                    feedback_lbl.grid()
+                    if APP:
+                        APP.toast("Incorrect answer.", "error")
+            
+            def show_hint():
+                if ex_h:
+                    feedback_lbl.configure(
+                        text=f"Hint: {ex_h}", 
+                        text_color=YOLK_DK
+                    )
+                    feedback_lbl.grid()
+                else:
+                    feedback_lbl.configure(
+                        text="No hints available for this exercise.", 
+                        text_color=DIM
+                    )
+                    feedback_lbl.grid()
+
+            ctk.CTkButton(
+                f_input, text="Submit Answer", font=(FONT_BODY, 12, "bold"),
+                fg_color=GREEN, hover_color=GREEN_DK, text_color="#FFFFFF",
+                width=110, height=30, corner_radius=6, command=check_answer
+            ).pack(side="left", padx=8)
+            
+            if ex_h:
+                ctk.CTkButton(
+                    f_input, text="Show Hint", font=(FONT_BODY, 12, "bold"),
+                    fg_color="transparent", hover_color=BLUE_SOFT, border_width=1, border_color=BORDER,
+                    text_color=INK2, width=90, height=30, corner_radius=6, command=show_hint
+                ).pack(side="left", padx=4)
+
+            curr_row += 1
+
+        # Control Buttons
         btns = ctk.CTkFrame(self._reading, fg_color="transparent")
-        btns.grid(row=5, column=0, sticky="ew", pady=(0, 8))
+        btns.grid(row=curr_row, column=0, sticky="ew", pady=(0, 8))
+        curr_row += 1
+
         ctk.CTkButton(btns, text="Learned" if learned else "Mark learned",
                       width=130, height=34, corner_radius=10,
                       fg_color=GREEN if learned else CARD2,
@@ -2941,21 +3427,27 @@ class LessonsTab(ctk.CTkFrame):
                       font=(FONT_BODY, 12, "bold"),
                       image=icon("circle_check", "cream" if learned else "dim", 16), compound="left",
                       command=lambda: self._toggle(ch)).pack(side="left", padx=(0, 8))
+                      
         ctk.CTkButton(btns, text="Edit", width=90, height=34, corner_radius=10,
                       fg_color="transparent", hover_color=BLUE_SOFT, border_width=1, border_color=BORDER,
                       text_color=INK2, font=(FONT_BODY, 12, "bold"),
                       image=icon("edit", "dim", 16), compound="left",
                       command=lambda: self._edit(ch)).pack(side="left")
 
+        # Navigation
         nav = ctk.CTkFrame(self._reading, fg_color="transparent")
-        nav.grid(row=6, column=0, sticky="ew", pady=(10, 4))
+        nav.grid(row=curr_row, column=0, sticky="ew", pady=(10, 4))
+        curr_row += 1
+
         nav.grid_columnconfigure(0, weight=1)
         nav.grid_columnconfigure(1, weight=1)
+        
         prev_btn = ctk.CTkButton(nav, text="← Previous", width=140, height=38, corner_radius=10,
                       fg_color=CARD2, hover_color=BLUE_SOFT, text_color=INK2, font=(FONT_BODY, 12, "bold"))
         prev_btn.configure(command=(lambda: self._select(idx - 1)) if idx > 0 else None,
                            state="normal" if idx > 0 else "disabled")
         prev_btn.grid(row=0, column=0, sticky="w")
+        
         next_btn = ctk.CTkButton(nav, text="Next →", width=140, height=38, corner_radius=10,
                       fg_color=BLUE, hover_color=BLUE_DK, text_color="#FFFFFF", font=(FONT_BODY, 12, "bold"))
         has_next = idx < len(self._chapters) - 1
@@ -3531,8 +4023,17 @@ class TrendsTab(ctk.CTkFrame):
             plan_pcts.append(int(dn / tot * 100) if tot else 0)
             ad = load_json(path_for("activities", d), {})
             act_done_counts.append(sum(1 for t in ad.get("tasks", []) if t.get("status") == "done"))
-            ld = load_json(path_for("lessons", d), {})
-            les_counts.append(sum(1 for l in ld.get("lessons", []) if l.get("learned")))
+            learned_count = 0
+            lessons_dir = CONTENT_DIR / "lessons"
+            if lessons_dir.exists():
+                for p in lessons_dir.glob("*.json"):
+                    if p.name == "incoming_lessons.json":
+                        continue
+                    ld = load_json(p, {})
+                    ok, fixed, _ = validate_and_fix("lessons", ld)
+                    if ok:
+                        learned_count += sum(1 for l in fixed.get("lessons", []) if l.get("learned") and l.get("date") == d)
+            les_counts.append(learned_count)
             labels.append(d[5:])
         row = 0
         specs = [
@@ -3600,10 +4101,18 @@ class GlobalSearchPanel(ctk.CTkFrame):
         for t in act.get("tasks", []):
             if q in (t.get("title", "") + t.get("note", "")).lower():
                 results.append((1, "Activities", t["title"]))
-        les = load_json(path_for("lessons", ds), {})
-        for l in les.get("lessons", []):
-            if q in (l.get("title", "") + l.get("what", "")).lower():
-                results.append((3, "Lessons", l["title"]))
+        lessons_dir = CONTENT_DIR / "lessons"
+        if lessons_dir.exists():
+            for p in lessons_dir.glob("*.json"):
+                if p.name == "incoming_lessons.json":
+                    continue
+                ld = load_json(p, {})
+                ok, fixed, _ = validate_and_fix("lessons", ld)
+                if ok:
+                    for l in fixed.get("lessons", []):
+                        if l.get("date") == ds:
+                            if q in (l.get("title", "") + l.get("what", "")).lower():
+                                results.append((3, "Lessons", l["title"]))
         tp = path_for("top_picks", ds)
         if tp.exists():
             for line in tp.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -3814,6 +4323,7 @@ class DashboardApp(ctk.CTk):
         self._toast = None
         self._jobs = []
         carry_over(self.current_date)
+        migrate_legacy_lessons()
         self.title(APP_TITLE)
         self.geometry(WIN_SIZE)
         self.minsize(1080, 680)
@@ -3977,9 +4487,23 @@ class DashboardApp(ctk.CTk):
         jobs = []
         for kind, key in [("top_picks", "top_picks_instruction"), ("plan", "plan_instruction"),
                           ("lessons", "lessons_instruction"), ("activities", "activities_instruction")]:
-            p = path_for(kind, ds)
-            if (not p.exists()) or p.stat().st_size < 5:
-                jobs.append((kind, key))
+            if kind == "lessons":
+                exists = False
+                lessons_dir = CONTENT_DIR / "lessons"
+                if lessons_dir.exists():
+                    for p in lessons_dir.glob("*.json"):
+                        if p.name == "incoming_lessons.json":
+                            continue
+                        ld = load_json(p, {})
+                        if any(l.get("date") == ds for l in ld.get("lessons", [])):
+                            exists = True
+                            break
+                if not exists:
+                    jobs.append((kind, key))
+            else:
+                p = path_for(kind, ds)
+                if (not p.exists()) or p.stat().st_size < 5:
+                    jobs.append((kind, key))
         if not jobs:
             return
         self._jobs = jobs
@@ -3997,7 +4521,8 @@ class DashboardApp(ctk.CTk):
         self._job_deadline = time.time() + 180
         self._job_stable = None
         self._job_size = -1
-        self._term.send_prompt(build_prompt(SETTINGS.get(key, ""), kind, ds))
+        prompt, display = build_prompt(SETTINGS.get(key, ""), kind, ds)
+        self._term.send_prompt(prompt, display)
         self.after(1500, self._watch_job)
 
     def _watch_job(self):
